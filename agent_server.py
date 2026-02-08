@@ -568,6 +568,102 @@ def _summarize_action(act) -> str:
         return str(act)[:80]
 
 
+# ─── Plan Progress Auto-Update ────────────────────────────────────────────────
+
+_plan_highest_done_idx = -1  # Track highest completed step index across plan resets
+
+
+def _auto_update_plan_progress(agent, log_entry: dict):
+    """Proactively mark plan steps as done/current based on what actually happened.
+
+    browser-use only updates plan step statuses when the LLM explicitly outputs
+    `current_plan_item`. Many models skip this field, leaving steps stuck on
+    'pending' even when the work is done. This function matches the agent's
+    thought/actions/URL against plan step text to infer progress.
+
+    Also handles browser-use plan_update resets: if the LLM replaces the plan,
+    we re-apply progress up to the highest previously completed step.
+    """
+    global _plan_highest_done_idx
+    plan = agent.state.plan
+    if not plan:
+        return
+
+    # Check if browser-use reset our progress (plan_update replaced the plan)
+    # If all steps are pending/current but we previously had done steps, re-apply
+    done_count = sum(1 for item in plan if item.status == "done")
+    if done_count == 0 and _plan_highest_done_idx >= 0:
+        # Plan was reset by browser-use. Re-mark previously completed steps.
+        for i in range(min(_plan_highest_done_idx + 1, len(plan))):
+            plan[i].status = "done"
+        next_idx = min(_plan_highest_done_idx + 1, len(plan) - 1)
+        if plan[next_idx].status != "done":
+            plan[next_idx].status = "current"
+        logger.info(
+            f"Plan auto-update: restored progress after plan_update reset "
+            f"({_plan_highest_done_idx + 1} steps re-marked done)"
+        )
+
+    # Gather context from the step
+    thought = (log_entry.get("thought") or "").lower()
+    actions_text = " ".join(str(a) for a in log_entry.get("action_summaries", [])).lower()
+    url = (log_entry.get("url") or "").lower()
+    evaluation = (log_entry.get("evaluation") or "").lower()
+    memory = (log_entry.get("memory") or "").lower()
+    context = f"{thought} {actions_text} {url} {evaluation} {memory}"
+
+    # Find the first 'current' step
+    current_idx = None
+    for i, item in enumerate(plan):
+        if item.status == "current":
+            current_idx = i
+            break
+
+    if current_idx is None:
+        # No current step -- find first pending and make it current
+        for i, item in enumerate(plan):
+            if item.status == "pending":
+                item.status = "current"
+                current_idx = i
+                break
+        if current_idx is None:
+            return  # All done or skipped
+
+    current_step = plan[current_idx]
+    step_text = current_step.text.lower()
+
+    # Extract key action words from the plan step for matching
+    step_keywords = [w for w in re.split(r'[\s,;.!?()\[\]]+', step_text) if len(w) > 3]
+
+    # Check if the current step's intent appears to be satisfied
+    if step_keywords:
+        matches = sum(1 for kw in step_keywords if kw in context)
+        match_ratio = matches / len(step_keywords)
+    else:
+        match_ratio = 0
+
+    # Also check for explicit success signals in the evaluation
+    success_signals = ["success" in evaluation, "completed" in evaluation,
+                       "done" in evaluation, "verdict: success" in evaluation]
+    has_success = any(success_signals)
+
+    # Mark current step as done if we have good evidence
+    if match_ratio >= 0.4 or has_success:
+        plan[current_idx].status = "done"
+        # Track highest done index
+        if current_idx > _plan_highest_done_idx:
+            _plan_highest_done_idx = current_idx
+        # Advance to next pending step
+        for i in range(current_idx + 1, len(plan)):
+            if plan[i].status == "pending":
+                plan[i].status = "current"
+                break
+        logger.debug(
+            f"Plan auto-update: step {current_idx} '{current_step.text[:50]}' -> done "
+            f"(match={match_ratio:.0%}, success={has_success})"
+        )
+
+
 # ─── Agent Step Callback ───────────────────────────────────────────────────────
 
 async def on_agent_step(browser_state, agent_output, step_number):
@@ -643,10 +739,12 @@ async def on_agent_step(browser_state, agent_output, step_number):
     state.action_log.append(log_entry)
 
     # Extract plan progress from browser-use agent state
+    # Also proactively update plan step statuses based on what actually happened
     plan_items = None
     if state.agent and hasattr(state.agent, "state") and hasattr(state.agent.state, "plan"):
         bu_plan = state.agent.state.plan
         if bu_plan:
+            _auto_update_plan_progress(state.agent, log_entry)
             plan_items = [
                 {"text": item.text, "status": item.status}
                 for item in bu_plan
@@ -1643,6 +1741,8 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
     state.generated_plan = ""
     state.plan_progress = []
     _last_loop_council_step = 0
+    global _plan_highest_done_idx
+    _plan_highest_done_idx = -1
 
     # Broadcast status change (with cleared plan/log so frontend drops stale data)
     await broadcast_status()
