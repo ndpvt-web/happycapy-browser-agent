@@ -570,6 +570,33 @@ h4 {
 
 /* ─── Council Member Picker ──────────────── */
 
+.council-planning-toggle {
+  display: flex;
+  align-items: center;
+}
+.council-planning-toggle .toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.council-planning-toggle .toggle-label input[type="checkbox"] {
+  accent-color: var(--color-coral);
+  width: 14px;
+  height: 14px;
+}
+.council-planning-toggle .toggle-label span:nth-child(2) {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.council-planning-toggle .toggle-hint {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-weight: 400 !important;
+}
+
 .council-picker {
   display: flex;
   flex-direction: column;
@@ -1241,6 +1268,60 @@ h4 {
   white-space: pre-wrap;
   line-height: 1.6;
 }
+
+/* Council vote summary in Plan tab */
+.council-vote-summary {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: var(--radius-md);
+}
+.council-vote-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8B5CF6;
+  margin-bottom: var(--space-2);
+}
+.council-vote-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.council-vote-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  font-size: 11px;
+}
+.council-vote-member.winner {
+  border-color: rgba(125, 155, 118, 0.5);
+  background: rgba(125, 155, 118, 0.08);
+}
+.council-vote-model {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.council-vote-count {
+  color: var(--color-text-muted);
+}
+.council-vote-winner-tag {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-success);
+  background: var(--color-success-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
 .log-warning {
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-3);
@@ -1552,8 +1633,15 @@ h4 {
     <label for="secondaryModel" id="secondaryModelLabel">Secondary Model</label>
     <select id="secondaryModel" class="model-select"></select>
   </div>
+  <div class="council-planning-toggle" id="councilPlanningGroup" style="display:none;">
+    <label class="toggle-label">
+      <input type="checkbox" id="councilPlanningCheck" onchange="onCouncilPlanningToggle()">
+      <span>Council Planning</span>
+      <span class="toggle-hint">Multiple models generate plans, then vote on the best one</span>
+    </label>
+  </div>
   <div class="council-picker" id="councilPickerGroup" style="display:none;">
-    <label>Council Members (select 2+)</label>
+    <label id="councilPickerLabel">Council Members (select 2+)</label>
     <div class="council-picker-grid" id="councilPickerGrid"></div>
   </div>
   <div class="strategy-hint" id="strategyHint">
@@ -1670,7 +1758,7 @@ h4 {
     const STRATEGY_HINTS = {
       single: 'Single model handles all steps.',
       fallback_chain: 'Primary model runs all steps. If it hits a rate limit or error, automatically switches to the fallback model.',
-      planner_executor: 'The planner model generates a high-level strategy BEFORE the run starts. The executor model then follows the plan step-by-step.',
+      planner_executor: 'Planner generates a strategy BEFORE the run. Executor follows it. Enable Council Planning to have multiple models propose and vote on the best plan.',
       consensus: 'Primary model acts. Judge model validates EVERY step in real-time and gives a final verdict at completion.',
       council: 'Primary model runs normally. On repeated failures, ALL other models convene as a council to diagnose the problem, provide advice, and replan if needed.',
     };
@@ -1911,21 +1999,44 @@ h4 {
       if (emptyPlan) emptyPlan.style.display = 'none';
 
       // Remove old plan items if any
-      planContent.querySelectorAll('.plan-step, .plan-header').forEach(el => el.remove());
+      planContent.querySelectorAll('.plan-step, .plan-header, .council-vote-summary').forEach(el => el.remove());
 
       const plannerShort = (data.planner_model || '').split('/').pop();
       const executorShort = (data.executor_model || '').split('/').pop();
+      const councilPlans = data.council_plans || [];
+      const isCouncilPlan = councilPlans.length > 0;
 
       // Add header
       const header = document.createElement('div');
       header.className = 'plan-header';
       header.innerHTML = `
-        <span class="plan-header-label">Plan</span>
-        <span class="log-plan-badge">Planner: ${plannerShort}</span>
+        <span class="plan-header-label">${isCouncilPlan ? 'Council Plan' : 'Plan'}</span>
+        <span class="log-plan-badge">${isCouncilPlan ? 'Council Vote' : 'Planner: ' + plannerShort}</span>
         <span class="log-plan-badge">Executor: ${executorShort}</span>
         <span class="plan-counter" id="planCounter">${steps.length} steps</span>
       `;
       planContent.insertBefore(header, planContent.firstChild);
+
+      // If council planning, show vote summary before steps
+      if (isCouncilPlan) {
+        const voteSummary = document.createElement('div');
+        voteSummary.className = 'council-vote-summary';
+        const memberHtml = councilPlans.map(m => {
+          const short = m.model.split('/').pop();
+          const badge = m.winner ? 'winner' : '';
+          const voteCount = m.votes || 0;
+          return `<div class="council-vote-member ${badge}">
+            <span class="council-vote-model">${escapeHtml(short)}</span>
+            <span class="council-vote-count">${voteCount} vote${voteCount !== 1 ? 's' : ''}</span>
+            ${m.winner ? '<span class="council-vote-winner-tag">WINNER</span>' : ''}
+          </div>`;
+        }).join('');
+        voteSummary.innerHTML = `
+          <div class="council-vote-header">${councilPlans.length} models proposed plans</div>
+          <div class="council-vote-members">${memberHtml}</div>
+        `;
+        planContent.insertBefore(voteSummary, header.nextSibling);
+      }
 
       // Add steps
       steps.forEach((stepText, i) => {
@@ -1952,10 +2063,13 @@ h4 {
       if (!document.querySelector('.log-plan')) {
         const div = document.createElement('div');
         div.className = 'log-plan';
+        const planLabel = isCouncilPlan
+          ? `COUNCIL PLAN (${councilPlans.length} models voted)`
+          : `PLAN (${steps.length} steps)`;
         div.innerHTML = `
           <div class="log-plan-header">
-            PLAN (${steps.length} steps)
-            <span class="log-plan-badge">${plannerShort}</span>
+            ${planLabel}
+            <span class="log-plan-badge">${isCouncilPlan ? 'Council' : plannerShort}</span>
           </div>
           <div class="log-plan-text" style="font-size:11px;line-height:1.4;">${steps.map((s, i) => `${i + 1}. ${escapeHtml(s)}`).join('\n')}</div>
         `;
@@ -2242,8 +2356,15 @@ h4 {
           ? document.getElementById('secondaryModel').value : '',
       };
 
-      // For council, collect selected council members
+      // For council strategy, collect selected council members
       if (strategy === 'council') {
+        const checked = document.querySelectorAll('#councilPickerGrid input[type="checkbox"]:checked');
+        modelConfig.council_members = Array.from(checked).map(cb => cb.value);
+      }
+
+      // For planner_executor with council planning
+      if (strategy === 'planner_executor' && document.getElementById('councilPlanningCheck').checked) {
+        modelConfig.use_council_planning = true;
         const checked = document.querySelectorAll('#councilPickerGrid input[type="checkbox"]:checked');
         modelConfig.council_members = Array.from(checked).map(cb => cb.value);
       }
@@ -2333,24 +2454,47 @@ h4 {
       const secondaryGroup = document.getElementById('secondaryModelGroup');
       const secondaryLabel = document.getElementById('secondaryModelLabel');
       const councilGroup = document.getElementById('councilPickerGroup');
+      const councilPlanGroup = document.getElementById('councilPlanningGroup');
       const hintText = document.getElementById('strategyHintText');
+      const councilLabel = document.getElementById('councilPickerLabel');
 
       if (strategy === 'council') {
-        // Council mode: show multi-select picker, hide single secondary dropdown
         secondaryGroup.style.display = 'none';
+        councilPlanGroup.style.display = 'none';
         councilGroup.style.display = 'flex';
-        // Auto-uncheck the primary model in council picker (it can't advise itself)
+        if (councilLabel) councilLabel.textContent = 'Council Members (select 2+)';
         updateCouncilChipsForPrimary();
+      } else if (strategy === 'planner_executor') {
+        secondaryGroup.style.display = 'flex';
+        councilPlanGroup.style.display = 'flex';
+        secondaryLabel.textContent = (STRATEGY_LABELS[strategy] || {}).secondaryLabel || 'Secondary Model';
+        // Show/hide council picker based on checkbox state
+        onCouncilPlanningToggle();
       } else if (strategy === 'single') {
         secondaryGroup.style.display = 'none';
+        councilPlanGroup.style.display = 'none';
         councilGroup.style.display = 'none';
       } else {
         secondaryGroup.style.display = 'flex';
+        councilPlanGroup.style.display = 'none';
         councilGroup.style.display = 'none';
         secondaryLabel.textContent = (STRATEGY_LABELS[strategy] || {}).secondaryLabel || 'Secondary Model';
       }
 
       hintText.textContent = STRATEGY_HINTS[strategy] || '';
+    }
+
+    function onCouncilPlanningToggle() {
+      const checked = document.getElementById('councilPlanningCheck').checked;
+      const councilGroup = document.getElementById('councilPickerGroup');
+      const councilLabel = document.getElementById('councilPickerLabel');
+      if (checked) {
+        councilGroup.style.display = 'flex';
+        if (councilLabel) councilLabel.textContent = 'Planning Council Members (select 2+)';
+        updateCouncilChipsForPrimary();
+      } else {
+        councilGroup.style.display = 'none';
+      }
     }
 
     function onCouncilChipToggle(checkbox) {

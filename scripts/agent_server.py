@@ -677,6 +677,7 @@ class ModelConfig(BaseModel):
     primary_model: str = ""
     secondary_model: str = ""
     council_members: list[str] = []  # explicit list of model IDs for the council
+    use_council_planning: bool = False  # planner_executor: use council vote instead of single planner
 
 
 # ─── LLM Factory ─────────────────────────────────────────────────────────────────
@@ -1352,6 +1353,127 @@ async def _generate_plan(planner_llm, task: str) -> str:
         )
 
 
+async def _generate_plan_with_council(council_member_ids: list[str], task: str) -> tuple[str, list[dict]]:
+    """Query multiple LLMs for plans in parallel, then pick the best one by vote.
+
+    Returns (best_plan_text, member_results) where member_results is a list of
+    dicts with model, plan, and vote_count for dashboard display.
+    """
+    from browser_use.llm.messages import SystemMessage, UserMessage
+
+    system_msg = SystemMessage(content=(
+        "You are a browser automation planning expert. Given a user task, "
+        "produce a short numbered plan of high-level actions a browser agent should follow.\n"
+        "Rules:\n"
+        "- Each step = ONE short sentence (max 10 words)\n"
+        "- Use action verbs: Navigate, Click, Type, Extract, Scroll, Verify, Wait\n"
+        "- 4-8 steps total. Be specific (include URLs, button names, field names when obvious)\n"
+        "- No explanations, no code, no filler words\n"
+        "Example:\n"
+        "1. Navigate to google.com\n"
+        "2. Type 'search query' in search box\n"
+        "3. Click Google Search button\n"
+        "4. Extract titles of top 3 results\n"
+        "5. Report the extracted titles"
+    ))
+    user_msg = UserMessage(content=f"Task: {task}")
+
+    # Phase 1: Each member generates a plan
+    async def _get_plan(model_id):
+        try:
+            llm = create_llm(model_id)
+            resp = await llm.ainvoke([system_msg, user_msg])
+            return {"model": model_id, "plan": resp.completion.strip()}
+        except Exception as e:
+            logger.warning(f"Council planner {model_id} failed: {e}")
+            return {"model": model_id, "plan": None}
+
+    results = await asyncio.gather(*[_get_plan(mid) for mid in council_member_ids])
+    valid = [r for r in results if r["plan"]]
+
+    if not valid:
+        logger.warning("Council planning: no models responded, using generic plan")
+        return (
+            f"1. Navigate to the relevant website for the task.\n"
+            f"2. Complete the user's request: {task}\n"
+            f"3. Verify the result matches the user's expectations.\n"
+            f"4. Extract and report the final result."
+        ), []
+
+    if len(valid) == 1:
+        logger.info(f"Council planning: only 1 response from {valid[0]['model']}")
+        return valid[0]["plan"], [{"model": valid[0]["model"], "plan": valid[0]["plan"], "votes": 1}]
+
+    # Phase 2: Each member votes for the best plan (not their own)
+    plans_text = "\n\n".join(
+        f"--- Plan {chr(65+i)} (by {r['model'].split('/')[-1]}) ---\n{r['plan']}"
+        for i, r in enumerate(valid)
+    )
+    vote_msg = SystemMessage(content=(
+        "You are judging browser automation plans. You will see multiple numbered plans "
+        "for the same task. Vote for the BEST plan (not your own if you authored one).\n"
+        "Criteria: specificity, completeness, conciseness, correct ordering.\n"
+        "Reply with ONLY the letter of the best plan (A, B, C, etc.) and one sentence why.\n"
+        "Format: VOTE: <letter> - <reason>"
+    ))
+    vote_user = UserMessage(content=f"Task: {task}\n\n{plans_text}")
+
+    async def _cast_vote(model_id):
+        try:
+            llm = create_llm(model_id)
+            resp = await llm.ainvoke([vote_msg, vote_user])
+            text = resp.completion.strip().upper()
+            # Extract the letter after VOTE:
+            for line in text.split("\n"):
+                if "VOTE:" in line.upper():
+                    after = line.upper().split("VOTE:")[1].strip()
+                    if after and after[0].isalpha():
+                        return {"model": model_id, "vote": after[0]}
+            # Fallback: first letter in response
+            for ch in text:
+                if ch.isalpha() and ord(ch) - 65 < len(valid):
+                    return {"model": model_id, "vote": ch}
+            return {"model": model_id, "vote": None}
+        except Exception as e:
+            logger.warning(f"Council voter {model_id} failed: {e}")
+            return {"model": model_id, "vote": None}
+
+    votes = await asyncio.gather(*[_cast_vote(mid) for mid in council_member_ids])
+
+    # Tally votes
+    vote_counts = {}
+    for v in votes:
+        if v["vote"]:
+            idx = ord(v["vote"]) - 65
+            if 0 <= idx < len(valid):
+                vote_counts[idx] = vote_counts.get(idx, 0) + 1
+
+    # Pick winner (most votes, tie-break: first plan with most steps)
+    if vote_counts:
+        winner_idx = max(vote_counts, key=lambda i: (vote_counts[i], len(valid[i]["plan"].split("\n"))))
+    else:
+        # No valid votes -- pick plan with most steps
+        winner_idx = max(range(len(valid)), key=lambda i: len(valid[i]["plan"].split("\n")))
+
+    winner = valid[winner_idx]
+    member_results = [
+        {
+            "model": r["model"],
+            "plan": r["plan"],
+            "votes": vote_counts.get(i, 0),
+            "winner": i == winner_idx,
+        }
+        for i, r in enumerate(valid)
+    ]
+
+    total_votes = sum(v for v in vote_counts.values())
+    logger.info(
+        f"Council planning: {len(valid)} plans, {total_votes} votes. "
+        f"Winner: {winner['model']} ({vote_counts.get(winner_idx, 0)} votes)"
+    )
+    return winner["plan"], member_results
+
+
 # ─── Agent Runner ───────────────────────────────────────────────────────────────
 
 async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelConfig] = None):
@@ -1420,25 +1542,49 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
         if strategy == "fallback_chain" and secondary_llm:
             extra_kwargs["fallback_llm"] = secondary_llm
 
-        elif strategy == "planner_executor" and secondary_llm:
-            plan_text = await _generate_plan(secondary_llm, task)
+        elif strategy == "planner_executor":
+            # Council-based planning: multiple models generate plans, then vote
+            use_council = model_cfg and model_cfg.use_council_planning
+            council_plan_members = []
+
+            if use_council:
+                council_plan_ids = model_cfg.council_members if model_cfg.council_members else [
+                    m["id"] for m in AVAILABLE_MODELS
+                ]
+                # Ensure at least 2 members for a meaningful vote
+                if len(council_plan_ids) < 2:
+                    logger.warning("Council planning requires 2+ models, falling back to single planner")
+                    use_council = False
+
+            if use_council:
+                plan_text, council_plan_members = await _generate_plan_with_council(council_plan_ids, task)
+                planner_label = f"Council ({len(council_plan_members)} models)"
+            elif secondary_llm:
+                plan_text = await _generate_plan(secondary_llm, task)
+                planner_label = secondary_id
+            else:
+                plan_text = await _generate_plan(primary_llm, task)
+                planner_label = primary_id
+
             state.generated_plan = plan_text
             extra_kwargs["extend_system_message"] = (
                 "\n\n## HIGH-LEVEL PLAN (from planning model)\n"
                 "Follow this plan step-by-step. Adapt if pages differ from expectations.\n\n"
                 + plan_text
             )
-            extra_kwargs["page_extraction_llm"] = secondary_llm
+            if secondary_llm:
+                extra_kwargs["page_extraction_llm"] = secondary_llm
+
             # Broadcast the generated plan to the dashboard
-            plan_msg = json.dumps({
-                "type": "plan",
-                "data": {
-                    "plan": plan_text,
-                    "planner_model": secondary_id,
-                    "executor_model": primary_id,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-            })
+            plan_data = {
+                "plan": plan_text,
+                "planner_model": planner_label,
+                "executor_model": primary_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            if council_plan_members:
+                plan_data["council_plans"] = council_plan_members
+            plan_msg = json.dumps({"type": "plan", "data": plan_data})
             disconnected = set()
             for ws in state.ws_clients:
                 try:
