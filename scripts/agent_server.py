@@ -44,6 +44,8 @@ SCREENSHOT_INTERVAL = 0.5  # seconds between screenshot pushes
 # ─── Available Models ────────────────────────────────────────────────────────────
 
 AVAILABLE_MODELS = [
+    {"id": "anthropic/claude-sonnet-4.5", "name": "Claude Sonnet 4.5", "tier": "fast", "vision": True},
+    {"id": "anthropic/claude-opus-4.5", "name": "Claude Opus 4.5", "tier": "reasoning", "vision": True},
     {"id": "openai/gpt-4o", "name": "GPT-4o", "tier": "fast", "vision": True},
     {"id": "moonshotai/kimi-k2.5", "name": "Kimi K2.5", "tier": "fast", "vision": True},
     {"id": "google/gemini-2.5-flash", "name": "Gemini 2.5 Flash", "tier": "fast", "vision": True},
