@@ -1188,7 +1188,7 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
             headless=False,
             window_size=ViewportSize(width=SCREEN_WIDTH, height=SCREEN_HEIGHT),
             disable_security=True,
-            demo_mode=True,
+            demo_mode=False,
             args=[
                 "--no-sandbox",
                 "--disable-gpu",
