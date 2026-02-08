@@ -438,6 +438,26 @@ h4 {
   background: rgba(198, 122, 107, 0.2);
 }
 
+.session-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  padding: 0 var(--space-2);
+  user-select: none;
+}
+.session-toggle input[type="checkbox"] {
+  accent-color: var(--color-coral);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.session-toggle-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
 .btn-toggle {
   height: 48px;
   width: 48px;
@@ -1605,6 +1625,10 @@ h4 {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
         Stop
       </button>
+      <label class="session-toggle" id="sessionToggle" title="When checked, starts a fresh browser. When unchecked, continues from where the last task left off.">
+        <input type="checkbox" id="newSessionCheck" />
+        <span class="session-toggle-label">New Session</span>
+      </label>
       <button id="modelToggleBtn" class="btn-toggle" onclick="toggleModelBar()" title="Model settings">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -1859,6 +1883,7 @@ h4 {
       isRunning = data.status === 'running';
       document.getElementById('startBtn').disabled = isRunning;
       document.getElementById('stopBtn').disabled = !isRunning;
+      document.getElementById('newSessionCheck').disabled = isRunning;
       document.getElementById('taskInput').disabled = isRunning;
 
       if (data.task) {
@@ -2369,12 +2394,15 @@ h4 {
         modelConfig.council_members = Array.from(checked).map(cb => cb.value);
       }
 
+      const newSession = document.getElementById('newSessionCheck').checked;
+
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'start_task',
           task,
           max_steps: maxSteps,
           model_config: modelConfig,
+          new_session: newSession,
         }));
         // Reset UI
         document.getElementById('resultCard').classList.remove('visible');
@@ -2385,9 +2413,12 @@ h4 {
         fetch('/api/agent/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task, max_steps: maxSteps, model_config_data: modelConfig }),
+          body: JSON.stringify({ task, max_steps: maxSteps, model_config_data: modelConfig, new_session: newSession }),
         });
       }
+
+      // Uncheck after starting so next task defaults to continue
+      document.getElementById('newSessionCheck').checked = false;
     }
 
     function stopTask() {

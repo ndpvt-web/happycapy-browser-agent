@@ -335,6 +335,11 @@ class AgentState:
         self.last_step_number: int = 0           # step number currently in progress
         self.stall_council_fired_for_step: int = -1  # step number we already fired stall council for
         self.stall_monitor_task: Optional[asyncio.Task] = None
+        self.browser_session = None  # Persistent BrowserSession across tasks
+        # Previous task context (for session continuity)
+        self.previous_task: str = ""
+        self.previous_result: str = ""
+        self.previous_model: str = ""
 
 state = AgentState()
 
@@ -1474,6 +1479,46 @@ async def _generate_plan_with_council(council_member_ids: list[str], task: str) 
     return winner["plan"], member_results
 
 
+# ─── Persistent Browser Session ──────────────────────────────────────────────────
+
+def _get_or_create_browser_session():
+    """Return the persistent browser session, creating one if needed."""
+    from browser_use import BrowserProfile, BrowserSession
+    from browser_use.browser.profile import ViewportSize
+
+    if state.browser_session is not None:
+        # Health check: if the browser process died, clear and recreate
+        try:
+            if (state.browser_session._cdp_client_root is not None
+                    and state.browser_session._cdp_client_root._ws is not None
+                    and state.browser_session._cdp_client_root._ws.closed):
+                logger.warning("Browser CDP connection lost, will create new session")
+                state.browser_session = None
+        except Exception:
+            # If we can't check, assume it's dead
+            logger.warning("Browser health check failed, will create new session")
+            state.browser_session = None
+
+    if state.browser_session is not None:
+        return state.browser_session
+
+    logger.info("Creating new persistent browser session (keep_alive=True)")
+    browser_profile = BrowserProfile(
+        headless=False,
+        keep_alive=True,
+        window_size=ViewportSize(width=SCREEN_WIDTH, height=SCREEN_HEIGHT),
+        disable_security=True,
+        demo_mode=False,
+        args=[
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+        ],
+    )
+    state.browser_session = BrowserSession(browser_profile=browser_profile)
+    return state.browser_session
+
+
 # ─── Agent Runner ───────────────────────────────────────────────────────────────
 
 async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelConfig] = None):
@@ -1602,24 +1647,21 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
             # Enable planning so the agent can receive replans from council
             extra_kwargs["enable_planning"] = True
 
-        # ── Configure browser to use our Xvfb display ──
-        from browser_use.browser.profile import ViewportSize
+        # ── Use persistent browser session ──
+        browser_session = _get_or_create_browser_session()
 
-        browser_profile = BrowserProfile(
-            headless=False,
-            window_size=ViewportSize(width=SCREEN_WIDTH, height=SCREEN_HEIGHT),
-            disable_security=True,
-            demo_mode=False,
-            args=[
-                "--no-sandbox",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-            ],
-        )
-
-        browser_session = BrowserSession(
-            browser_profile=browser_profile,
-        )
+        # ── Inject previous task context when continuing a session ──
+        if state.previous_task and state.previous_result:
+            prev_ctx = (
+                "\n\n## PREVIOUS TASK CONTEXT (browser session continues from previous task)\n"
+                f"Previous task: {state.previous_task}\n"
+                f"Previous result: {state.previous_result[:500]}\n"
+                f"Previous model: {state.previous_model}\n"
+                "The browser may still be on the page from the previous task. "
+                "Use the current page state to your advantage if relevant.\n"
+            )
+            existing = extra_kwargs.get("extend_system_message", "")
+            extra_kwargs["extend_system_message"] = existing + prev_ctx
 
         # ── Create agent ──
         agent = Agent(
@@ -1685,20 +1727,17 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
         if state.stall_monitor_task and not state.stall_monitor_task.done():
             state.stall_monitor_task.cancel()
             state.stall_monitor_task = None
+        # Save context for next task's session continuity
+        state.previous_task = state.current_task_text
+        state.previous_result = state.result or ""
+        state.previous_model = state.active_primary_model
         state.is_running = False
         state.agent = None
         state.last_step_start_time = 0.0
         state.stall_council_fired_for_step = -1
         await broadcast_status()
-
-        # Show splash screen on the Xvfb display
-        total_actions = sum(len(e.get("actions", [])) for e in state.action_log)
-        _show_splash(
-            status=state.status,
-            steps=state.step_count,
-            actions=total_actions,
-            result_text=(state.result or "")[:200],
-        )
+        # Browser stays alive (keep_alive=True) so user can see where it ended up.
+        # No splash screen -- the Xvfb display shows the browser's last page.
 
 
 async def broadcast_status():
@@ -1734,6 +1773,7 @@ class StartAgentRequest(BaseModel):
     task: str
     max_steps: int = Field(default=50, ge=1, le=500)
     model_config_data: Optional[ModelConfig] = None
+    new_session: bool = False  # if True, kill browser and start fresh
 
     @field_validator("task")
     @classmethod
@@ -1744,11 +1784,30 @@ class StartAgentRequest(BaseModel):
         return v
 
 
+async def _kill_browser_session():
+    """Kill the persistent browser session and clear previous task context."""
+    if state.browser_session:
+        try:
+            state.browser_session.browser_profile.keep_alive = False
+            await state.browser_session.kill()
+        except Exception as e:
+            logger.warning(f"Error killing browser session: {e}")
+        state.browser_session = None
+        logger.info("Browser session killed for new session")
+    # Clear previous task context since we're starting fresh
+    state.previous_task = ""
+    state.previous_result = ""
+    state.previous_model = ""
+
+
 @app.post("/api/agent/start")
 async def start_agent(payload: StartAgentRequest):
     """Start a new agent task."""
     if state.is_running:
         return {"error": "Agent is already running. Stop it first.", "status": state.status}
+
+    if payload.new_session:
+        await _kill_browser_session()
 
     task = payload.task
     max_steps = payload.max_steps
@@ -1772,6 +1831,19 @@ async def stop_agent():
     return {"status": "not_running"}
 
 
+@app.post("/api/agent/new-session")
+async def new_browser_session():
+    """Kill the persistent browser and start fresh on next task."""
+    if state.is_running:
+        return JSONResponse(
+            status_code=409,
+            content={"status": "error", "message": "Cannot reset session while a task is running"},
+        )
+    await _kill_browser_session()
+    _show_splash(status="idle")
+    return {"status": "ok", "message": "Browser session cleared"}
+
+
 @app.get("/api/agent/status")
 async def get_status():
     """Get current agent status."""
@@ -1788,6 +1860,8 @@ async def get_status():
         "council_members": state.active_council_members,
         "generated_plan": state.generated_plan,
         "plan_progress": state.plan_progress,
+        "has_browser_session": state.browser_session is not None,
+        "previous_task": state.previous_task,
     }
 
 
@@ -1864,6 +1938,8 @@ async def websocket_endpoint(ws: WebSocket):
                     max_steps = msg.get("max_steps", 50)
                     mc_raw = msg.get("model_config", {})
                     model_cfg = ModelConfig(**mc_raw) if mc_raw else None
+                    if msg.get("new_session"):
+                        await _kill_browser_session()
                     if task:
                         state.agent_task = asyncio.create_task(run_agent(task, max_steps, model_cfg))
                         await ws.send_text(json.dumps({"type": "ack", "message": "Task started"}))
