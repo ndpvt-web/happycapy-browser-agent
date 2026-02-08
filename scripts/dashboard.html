@@ -1,0 +1,1934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Agent - Live Control Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Courier+Prime&display=swap" rel="stylesheet">
+  <style>
+/* Google Fonts: https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Courier+Prime&display=swap */
+
+/* ==========================================================================
+   HappyCapy Design System — Tokens & Global Styles
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Light Mode Tokens
+   -------------------------------------------------------------------------- */
+:root {
+  /* Background & Surface */
+  --color-bg-primary: #F9F6F1;
+  --color-bg-secondary: #F0EEE7;
+  --color-bg-card: #FFFFFF;
+  --color-bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* Text */
+  --color-text-primary: #111827;
+  --color-text-secondary: #6b7280;
+  --color-text-muted: #9ca3af;
+  --color-text-inverse: #ffffff;
+
+  /* Borders */
+  --color-border: #e5e7eb;
+  --color-border-muted: #d1d5db;
+  --color-border-focus: #FF6B4A;
+
+  /* Coral (Primary Accent) */
+  --color-coral: #FF6B4A;
+  --color-coral-light: #FF7A5C;
+  --color-coral-hover: #e55a3a;
+  --color-coral-bg: rgba(255, 107, 74, 0.1);
+
+  /* Status: Success / Wetland Moss */
+  --color-success: #7D9B76;
+  --color-success-bg: rgba(125, 155, 118, 0.12);
+
+  /* Status: Warning / Warm Sand */
+  --color-warning: #D4A76A;
+  --color-warning-bg: rgba(212, 167, 106, 0.12);
+
+  /* Status: Error / Terra Cotta */
+  --color-error: #C67A6B;
+  --color-error-bg: rgba(198, 122, 107, 0.12);
+
+  /* Status: Semantic Mappings */
+  --color-status-running: #FF6B4A;
+  --color-status-idle: #7BA3A8;
+  --color-status-pending: #9B8B7A;
+  --color-status-complete: #7D9B76;
+
+  /* Task Status */
+  --color-pending: #9B8B7A;
+  --color-in-progress: #FF6B4A;
+  --color-completed: #7D9B76;
+  --color-blocked: #C67A6B;
+
+  /* Role Colors */
+  --color-leader: #8B5CF6;
+  --color-teammate: #3B82F6;
+
+  /* Typography */
+  --font-heading: 'Instrument Serif', Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --font-mono: 'Courier Prime', 'SF Mono', Monaco, 'Courier New', monospace;
+
+  /* Font Sizes */
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: 1.875rem;
+  --font-size-4xl: 2.25rem;
+
+  /* Spacing (8-point grid) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Border Radius */
+  --radius-sm: 0.125rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.03);
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.1);
+
+  /* Gradients */
+  --gradient-coral: linear-gradient(135deg, #FF6B4A 0%, #FF8A6B 100%);
+  --gradient-success: linear-gradient(135deg, #7D9B76 0%, #8FAD82 50%, #9AAD7A 100%);
+  --gradient-idle: linear-gradient(135deg, #7BA3A8 0%, #8EB3B8 100%);
+  --gradient-warm-bg: linear-gradient(180deg, #F9F6F1 0%, #F0EEE7 100%);
+  --gradient-progress: linear-gradient(90deg, #FF6B4A 0%, #7D9B76 100%);
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-default: 200ms ease;
+  --transition-slow: 300ms ease;
+}
+
+/* --------------------------------------------------------------------------
+   Dark Mode Overrides
+   -------------------------------------------------------------------------- */
+[data-theme="dark"] {
+  --color-bg-primary: #121212;
+  --color-bg-secondary: #1a1a1a;
+  --color-bg-card: #2a2a2a;
+  --color-bg-overlay: rgba(0, 0, 0, 0.7);
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #9ca3af;
+  --color-text-muted: #6b7280;
+  --color-text-inverse: #111827;
+
+  --color-border: #374151;
+  --color-border-muted: #4b5563;
+
+  --color-coral-bg: rgba(255, 107, 74, 0.15);
+  --color-success-bg: rgba(125, 155, 118, 0.15);
+  --color-warning-bg: rgba(212, 167, 106, 0.15);
+  --color-error-bg: rgba(198, 122, 107, 0.15);
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.3);
+
+  --gradient-warm-bg: linear-gradient(180deg, #121212 0%, #1a1a1a 100%);
+}
+
+/* --------------------------------------------------------------------------
+   Keyframe Animations
+   -------------------------------------------------------------------------- */
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.4; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes progressShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes judgeSlideIn {
+  0% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes councilSlideIn {
+  0% {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced Motion
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Global Reset
+   -------------------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Body
+   -------------------------------------------------------------------------- */
+body {
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* --------------------------------------------------------------------------
+   Headings
+   -------------------------------------------------------------------------- */
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: var(--font-size-4xl);
+}
+
+h2 {
+  font-size: var(--font-size-3xl);
+}
+
+h3 {
+  font-size: var(--font-size-2xl);
+}
+
+h4 {
+  font-size: var(--font-size-xl);
+}
+
+/* --------------------------------------------------------------------------
+   Scrollbar Styles
+   -------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-muted);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-coral);
+}
+
+/* ─── Header ──────────────────────────────── */
+.header {
+  background: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-4) var(--space-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.logo {
+  width: 36px;
+  height: 36px;
+  background: var(--gradient-coral);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: white;
+  flex-shrink: 0;
+}
+
+.header h1 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-xl);
+  font-weight: 400;
+  color: var(--color-text-primary);
+  line-height: 1.25;
+}
+
+.header h1 span {
+  color: var(--color-text-secondary);
+}
+
+/* ─── Connection Badge ────────────────────── */
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.connection-badge.connected {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border: 1px solid rgba(125, 155, 118, 0.25);
+}
+
+.connection-badge.disconnected {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border: 1px solid rgba(198, 122, 107, 0.25);
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.connection-badge.connected .connection-dot {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ─── Task Input Bar ──────────────────────── */
+.task-bar {
+  background: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-4) var(--space-6);
+  display: flex;
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+.task-input-wrapper {
+  flex: 1;
+  position: relative;
+}
+
+.task-input {
+  width: 100%;
+  height: 48px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: 0 var(--space-4);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-body);
+  outline: none;
+  transition: border-color var(--transition-default), box-shadow var(--transition-default);
+}
+
+.task-input:focus {
+  border-color: var(--color-coral);
+  box-shadow: 0 0 0 3px rgba(255, 107, 74, 0.15);
+}
+
+.task-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.task-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Buttons ─────────────────────────────── */
+.btn {
+  height: 48px;
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-xl);
+  border: none;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: all var(--transition-fast);
+  font-family: var(--font-body);
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-coral);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-coral-hover);
+  box-shadow: 0 0 20px rgba(255, 107, 74, 0.25);
+}
+
+.btn-danger {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border: 1px solid rgba(198, 122, 107, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(198, 122, 107, 0.2);
+}
+
+.btn-toggle {
+  height: 48px;
+  width: 48px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.btn-toggle:hover {
+  border-color: var(--color-coral);
+  color: var(--color-coral);
+}
+
+.btn-toggle.active {
+  border-color: var(--color-coral);
+  background: var(--color-coral-bg);
+  color: var(--color-coral);
+}
+
+/* ─── Max Steps ───────────────────────────── */
+.max-steps-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.max-steps-wrapper label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.max-steps-input {
+  width: 64px;
+  height: 48px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: 0 var(--space-3);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-body);
+  text-align: center;
+  outline: none;
+  transition: border-color var(--transition-default);
+}
+
+.max-steps-input:focus {
+  border-color: var(--color-coral);
+  box-shadow: 0 0 0 3px rgba(255, 107, 74, 0.15);
+}
+
+/* ─── Model Configuration Bar ─────────────── */
+
+.model-bar {
+  grid-column: 1 / -1;
+  background: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-3) var(--space-6);
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.model-select-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.model-select-group label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+}
+
+.model-select {
+  height: 36px;
+  min-width: 180px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 0 var(--space-3);
+  padding-right: 30px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.model-select:focus {
+  border-color: var(--color-coral);
+  box-shadow: 0 0 0 2px rgba(255, 107, 74, 0.15);
+}
+
+.model-select option {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+
+/* ─── Strategy Hint ──────────────────────── */
+
+.strategy-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-coral-bg);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 107, 74, 0.15);
+  max-width: 300px;
+  line-height: 1.4;
+}
+
+/* ─── Council Member Picker ──────────────── */
+
+.council-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.council-picker > label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+}
+
+.council-picker-grid {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.council-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.council-chip:hover {
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.council-chip.selected {
+  border-color: rgba(139, 92, 246, 0.5);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.council-chip input[type="checkbox"] {
+  accent-color: #8b5cf6;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.council-chip-name {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.council-chip-tier {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  padding: 1px var(--space-2);
+  background: rgba(139, 92, 246, 0.08);
+  border-radius: var(--radius-sm);
+}
+
+.council-chip.selected .council-chip-name {
+  color: #c4b5fd;
+}
+
+/* ─── Model Badge ────────────────────────── */
+
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+}
+
+.model-badge.strategy-badge {
+  color: var(--color-coral);
+  border-color: rgba(255, 107, 74, 0.3);
+  background: var(--color-coral-bg);
+}
+
+/* ─── Log Model Tag ──────────────────────── */
+
+.log-model {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--color-coral);
+  opacity: 0.7;
+  margin-left: var(--space-1);
+}
+
+/* ─── Model Info Row ─────────────────────── */
+
+.model-info-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+/* ================================================================
+   04 - Screen Panel (VNC / Screenshot Viewer)
+   HappyCapy Design System
+   ================================================================ */
+
+/* --- Panel Layout --- */
+.screen-panel {
+  background: var(--color-bg-primary);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+/* --- Panel Header --- */
+.panel-header {
+  padding: var(--space-3) var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+}
+
+/* --- Screen Container --- */
+.screen-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+/* --- Screen View (iframe & img) --- */
+.screen-view {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: var(--radius-md);
+  background: #111;
+}
+
+/* --- Placeholder (shown before agent starts) --- */
+.screen-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+}
+
+.screen-placeholder svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.3;
+}
+
+.screen-placeholder p {
+  font-size: var(--font-size-sm);
+}
+
+/* --- View Toggle (VNC / Screenshots) --- */
+.view-toggle {
+  display: flex;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.view-toggle button {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+
+.view-toggle button.active {
+  background: var(--color-coral);
+  color: white;
+}
+
+/* ─── Status Card ─────────────────────────── */
+.status-card {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-indicator.idle {
+  background: var(--color-status-idle);
+}
+
+.status-indicator.running {
+  background: var(--color-status-running);
+  box-shadow: 0 0 8px rgba(255, 107, 74, 0.5);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-indicator.completed {
+  background: var(--color-success);
+}
+
+.status-indicator.failed {
+  background: var(--color-error);
+}
+
+.status-indicator.stopped {
+  background: var(--color-warning);
+}
+
+.status-label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-meta {
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.status-meta strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+/* ─── Current Task ────────────────────────── */
+.current-task {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  display: none;
+}
+
+.current-task.visible {
+  display: block;
+}
+
+.current-task .label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-1);
+}
+
+/* ─── Result Card ─────────────────────────── */
+.result-card {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-success-bg);
+  border: 1px solid rgba(125, 155, 118, 0.15);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-xs);
+  color: var(--color-success);
+  line-height: 1.5;
+  display: none;
+}
+
+.result-card.visible {
+  display: block;
+}
+
+.result-card.error {
+  background: var(--color-error-bg);
+  border-color: rgba(198, 122, 107, 0.15);
+  color: var(--color-error);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   06 – Action Log, Judge Verdicts & Council Verdict
+   HappyCapy Design System
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── Action Log Container ────────────────────────────────── */
+
+.action-log-container {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.action-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  min-height: 0;
+}
+
+.action-log::-webkit-scrollbar {
+  width: 8px;
+}
+
+.action-log::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-full);
+}
+
+.action-log::-webkit-scrollbar-thumb {
+  background: var(--color-border-muted);
+  border-radius: var(--radius-full);
+}
+
+.action-log::-webkit-scrollbar-thumb:hover {
+  background: var(--color-coral);
+}
+
+/* ─── Log Entries ─────────────────────────────────────────── */
+
+.log-entry {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--transition-fast);
+}
+
+.log-entry:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .log-entry:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.log-entry-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.step-badge {
+  background: var(--color-coral-bg);
+  border: 1px solid rgba(255, 107, 74, 0.25);
+  border-radius: var(--radius-md);
+  padding: 1px var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--color-coral);
+  font-family: var(--font-mono);
+}
+
+.log-url {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 250px;
+}
+
+.log-timestamp {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.log-thought {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+  margin-bottom: var(--space-2);
+}
+
+.log-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.log-action {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-warning);
+  padding: 3px var(--space-2);
+  background: var(--color-warning-bg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Empty Log State ─────────────────────────────────────── */
+
+.empty-log {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ─── Judge Verdict Badges ────────────────────────────────── */
+
+.judge-verdict {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-xs);
+  margin-top: var(--space-1);
+  animation: judgeSlideIn 0.3s ease-out;
+}
+
+
+.judge-verdict.pass {
+  background: var(--color-success-bg);
+  border: 1px solid rgba(125, 155, 118, 0.25);
+  color: var(--color-success);
+}
+
+.judge-verdict.warn {
+  background: var(--color-warning-bg);
+  border: 1px solid rgba(212, 167, 106, 0.25);
+  color: var(--color-warning);
+}
+
+.judge-verdict.fail {
+  background: var(--color-error-bg);
+  border: 1px solid rgba(198, 122, 107, 0.25);
+  color: var(--color-error);
+}
+
+.judge-icon {
+  font-size: var(--font-size-sm);
+  font-weight: bold;
+}
+
+.judge-label {
+  font-weight: 600;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.7;
+}
+
+.judge-reason {
+  flex: 1;
+}
+
+/* ─── Council Verdict Display ─────────────────────────────── */
+
+.council-verdict {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  animation: councilSlideIn 0.4s ease-out;
+}
+
+
+.council-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #a78bfa;
+}
+
+.council-header svg {
+  width: 14px;
+  height: 14px;
+  stroke: #a78bfa;
+}
+
+.council-members {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+
+.council-member-tag {
+  font-size: 9px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: rgba(139, 92, 246, 0.12);
+  color: #c4b5fd;
+  font-family: var(--font-mono);
+}
+
+.council-section {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: 3px;
+  line-height: 1.4;
+}
+
+.council-section strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.council-replan {
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-success-bg);
+  border: 1px solid rgba(125, 155, 118, 0.15);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-success);
+}
+
+/* ================================================================
+   07 - Main Layout Grid & Responsive
+   HappyCapy Design System
+   ================================================================ */
+
+/* --- Main Grid Layout --- */
+.main {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  grid-template-rows: auto auto 1fr;
+  gap: 0;
+  height: calc(100vh - 57px);
+}
+
+/* --- Task Bar (full-width, first row) --- */
+.task-bar {
+  grid-column: 1 / -1;
+}
+
+/* --- Model Bar (full-width, second row) --- */
+.model-bar {
+  grid-column: 1 / -1;
+}
+
+/* --- Screen Panel (left column, third row) ---
+   Core styles live in 04-screen.css; this ensures grid placement */
+.screen-panel {
+  min-height: 0;
+}
+
+/* --- Right Panel (right column, third row) --- */
+.right-panel {
+  background: var(--color-bg-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ================================================================
+   Responsive Breakpoints
+   ================================================================ */
+
+/* --- Tablet / Narrow Desktop (max-width: 1024px) --- */
+@media (max-width: 1024px) {
+  .main {
+    grid-template-columns: 1fr 360px;
+  }
+}
+
+/* --- Mobile (max-width: 768px) --- */
+@media (max-width: 768px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 50vh 1fr;
+  }
+
+  .screen-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .task-bar {
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .model-bar {
+    flex-wrap: wrap;
+  }
+
+  /* Hide button label text on mobile, keep icons visible */
+  .btn .btn-label {
+    display: none;
+  }
+}
+
+/* --- Small Mobile (max-width: 480px) --- */
+@media (max-width: 480px) {
+  .task-bar {
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .model-bar {
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .right-panel {
+    min-height: 200px;
+  }
+
+  .max-steps-wrapper {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+}
+
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">BA</div>
+      <h1>Browser Agent <span>/ Live Control Panel</span></h1>
+    </div>
+    <div id="connectionBadge" class="connection-badge disconnected">
+      <div class="connection-dot"></div>
+      <span id="connectionText">Disconnected</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- Task Input Bar -->
+    <div class="task-bar">
+      <div class="task-input-wrapper">
+        <input
+          type="text"
+          id="taskInput"
+          class="task-input"
+          placeholder="Enter a task for the browser agent... e.g. 'Search for the latest AI news on Hacker News and summarize the top 3 stories'"
+          autocomplete="off"
+        />
+      </div>
+      <div class="max-steps-wrapper">
+        <label for="maxSteps">Max steps</label>
+        <input type="number" id="maxSteps" class="max-steps-input" value="50" min="1" max="200" />
+      </div>
+      <button id="startBtn" class="btn btn-primary" onclick="startTask()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Run Agent
+      </button>
+      <button id="stopBtn" class="btn btn-danger" onclick="stopTask()" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+        Stop
+      </button>
+      <button id="modelToggleBtn" class="btn-toggle" onclick="toggleModelBar()" title="Model settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+    </div>
+
+<!-- Model Configuration Bar (collapsible) -->
+<div class="model-bar" id="modelBar" style="display:none;">
+  <div class="model-select-group">
+    <label for="strategySelect">Strategy</label>
+    <select id="strategySelect" class="model-select" onchange="onStrategyChange()">
+      <option value="single">Single Model</option>
+      <option value="fallback_chain">Fallback Chain</option>
+      <option value="planner_executor">Planner + Executor</option>
+      <option value="consensus">Consensus (Judge)</option>
+      <option value="council">LLM Council</option>
+    </select>
+  </div>
+  <div class="model-select-group">
+    <label for="primaryModel">Primary Model</label>
+    <select id="primaryModel" class="model-select"></select>
+  </div>
+  <div class="model-select-group" id="secondaryModelGroup" style="display:none;">
+    <label for="secondaryModel" id="secondaryModelLabel">Secondary Model</label>
+    <select id="secondaryModel" class="model-select"></select>
+  </div>
+  <div class="council-picker" id="councilPickerGroup" style="display:none;">
+    <label>Council Members (select 2+)</label>
+    <div class="council-picker-grid" id="councilPickerGrid"></div>
+  </div>
+  <div class="strategy-hint" id="strategyHint">
+    <span id="strategyHintText">Single model handles all steps.</span>
+  </div>
+</div>
+
+<!-- Screen Panel -->
+<div class="screen-panel">
+  <div class="panel-header">
+    <span class="panel-title">Live Screen</span>
+    <div class="view-toggle">
+      <button id="btnVnc" class="active" onclick="setView('vnc')">VNC Stream</button>
+      <button id="btnScreenshot" onclick="setView('screenshot')">Screenshots</button>
+    </div>
+  </div>
+  <div class="screen-container">
+    <iframe id="vncFrame" class="screen-view" style="display:none;"></iframe>
+    <img id="screenshotImg" class="screen-view" style="display:none; object-fit:contain;" />
+    <div id="screenPlaceholder" class="screen-placeholder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="2" y="3" width="20" height="14" rx="2"/>
+        <line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      <p>Virtual display will appear when the agent starts</p>
+    </div>
+  </div>
+</div>
+
+    <!-- Right Panel -->
+    <div class="right-panel">
+      <!-- Status Card -->
+      <div class="status-card">
+        <div class="status-row">
+          <div id="statusDot" class="status-indicator idle"></div>
+          <span id="statusLabel" class="status-label">Idle</span>
+        </div>
+        <div class="status-meta">
+          <span>Steps: <strong id="stepCount">0</strong></span>
+          <span>Actions: <strong id="actionCount">0</strong></span>
+        </div>
+        <div id="modelInfoRow" class="model-info-row" style="display:none;"></div>
+        <div id="currentTask" class="current-task">
+          <div class="label">Current Task</div>
+          <div id="currentTaskText"></div>
+        </div>
+        <div id="resultCard" class="result-card">
+          <div class="label" style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Result</div>
+          <div id="resultText"></div>
+        </div>
+      </div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     06 – Action Log Panel
+     HappyCapy Design System
+     ═══════════════════════════════════════════════════════════ -->
+
+<div class="action-log-container">
+  <div class="panel-header">
+    <span class="panel-title">Agent Reasoning &amp; Actions</span>
+    <button class="btn" style="height:28px;padding:0 var(--space-3);font-size:var(--font-size-xs);background:var(--color-bg-secondary);color:var(--color-text-secondary);border:1px solid var(--color-border);border-radius:var(--radius-lg);cursor:pointer;" onclick="clearLog()">Clear</button>
+  </div>
+  <div id="actionLog" class="action-log">
+    <div id="emptyLog" class="empty-log">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+      </svg>
+      <span>No actions yet. Start a task to see agent reasoning.</span>
+    </div>
+  </div>
+</div>
+    </div>
+  </div>
+
+  <script>
+    // ─── State ──────────────────────────────────
+    let ws = null;
+    let viewMode = 'vnc'; // 'vnc' | 'screenshot'
+    let isRunning = false;
+    let noVncUrl = '';
+    let reconnectTimer = null;
+    let totalActions = 0;
+
+    // ─── Model Configuration State ──────────────
+    let availableModels = [];
+    let modelBarVisible = false;
+
+    const STRATEGY_LABELS = {
+      single: { label: 'Single Model', secondaryLabel: '' },
+      fallback_chain: { label: 'Fallback Chain', secondaryLabel: 'Fallback Model' },
+      planner_executor: { label: 'Planner + Executor', secondaryLabel: 'Planner Model (reasoning)' },
+      consensus: { label: 'Consensus (Judge)', secondaryLabel: 'Judge Model' },
+      council: { label: 'LLM Council', secondaryLabel: '' },
+    };
+
+    const STRATEGY_HINTS = {
+      single: 'Single model handles all steps.',
+      fallback_chain: 'Primary model runs all steps. If it hits a rate limit or error, automatically switches to the fallback model.',
+      planner_executor: 'The planner model generates a high-level strategy BEFORE the run starts. The executor model then follows the plan step-by-step.',
+      consensus: 'Primary model acts. Judge model validates EVERY step in real-time and gives a final verdict at completion.',
+      council: 'Primary model runs normally. On repeated failures, ALL other models convene as a council to diagnose the problem, provide advice, and replan if needed.',
+    };
+
+    // ─── Determine URLs ─────────────────────────
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${location.host}/ws`;
+
+    // noVNC URL - same host, port 6080 mapped through proxy
+    // In the sandbox, we construct the noVNC URL from the current host
+    function getNoVncUrl() {
+      // The noVNC is served on port 6080, which needs to be exported separately
+      // We'll construct it by replacing the port in the current URL
+      const currentHost = location.hostname;
+      const baseUrl = location.origin;
+      // noVNC path - use vnc.html or vnc_lite.html
+      // Since noVNC runs on a separate port, we need the exported URL
+      // For now, we embed it or use screenshot mode as fallback
+      return '';
+    }
+
+    // ─── WebSocket Connection ───────────────────
+    function connectWebSocket() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById('connectionBadge').className = 'connection-badge connected';
+        document.getElementById('connectionText').textContent = 'Connected';
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('connectionBadge').className = 'connection-badge disconnected';
+        document.getElementById('connectionText').textContent = 'Disconnected';
+        reconnectTimer = setTimeout(connectWebSocket, 2000);
+      };
+
+      ws.onerror = () => {};
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleMessage(msg);
+        } catch (e) {
+          console.warn('Failed to parse WebSocket message:', e);
+        }
+      };
+    }
+
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'status':
+          updateStatus(msg.data);
+          break;
+        case 'step':
+          addLogEntry(msg.data);
+          break;
+        case 'screenshot':
+          updateScreenshot(msg.data);
+          break;
+        case 'judge_verdict':
+          appendJudgeVerdict(msg.data);
+          break;
+        case 'council_verdict':
+          appendCouncilVerdict(msg.data);
+          break;
+        case 'error':
+          console.error('Server error:', msg.message);
+          break;
+      }
+    }
+
+    // ─── Status Updates ─────────────────────────
+    function updateStatus(data) {
+      const dot = document.getElementById('statusDot');
+      const label = document.getElementById('statusLabel');
+      const stepCount = document.getElementById('stepCount');
+      const taskDiv = document.getElementById('currentTask');
+      const taskText = document.getElementById('currentTaskText');
+      const resultCard = document.getElementById('resultCard');
+      const resultText = document.getElementById('resultText');
+
+      dot.className = `status-indicator ${data.status}`;
+      label.textContent = data.status;
+      stepCount.textContent = data.steps || 0;
+
+      isRunning = data.status === 'running';
+      document.getElementById('startBtn').disabled = isRunning;
+      document.getElementById('stopBtn').disabled = !isRunning;
+      document.getElementById('taskInput').disabled = isRunning;
+
+      if (data.task) {
+        taskDiv.classList.add('visible');
+        taskText.textContent = data.task;
+      } else {
+        taskDiv.classList.remove('visible');
+      }
+
+      if (data.result && data.status !== 'running') {
+        resultCard.classList.add('visible');
+        resultCard.classList.toggle('error', data.status === 'failed');
+        resultText.textContent = data.result;
+      } else {
+        resultCard.classList.remove('visible');
+      }
+
+      // Model info display
+      const modelInfoRow = document.getElementById('modelInfoRow');
+      if (data.strategy && data.primary_model) {
+        const strategyName = (STRATEGY_LABELS[data.strategy] || {}).label || data.strategy;
+        const shortModel = data.primary_model.split('/').pop();
+        let html = `<span class="model-badge strategy-badge">${escapeHtml(strategyName)}</span>`;
+        html += `<span class="model-badge">${escapeHtml(shortModel)}</span>`;
+        if (data.strategy === 'council' && data.council_members && data.council_members.length > 0) {
+          // Show each council member as a badge
+          data.council_members.forEach(mid => {
+            const short = mid.split('/').pop();
+            html += `<span class="model-badge" style="border-color:rgba(139,92,246,0.3);color:#c4b5fd;">+ ${escapeHtml(short)}</span>`;
+          });
+        } else if (data.secondary_model) {
+          const shortSecondary = data.secondary_model.split('/').pop();
+          html += `<span class="model-badge">+ ${escapeHtml(shortSecondary)}</span>`;
+        }
+        modelInfoRow.innerHTML = html;
+        modelInfoRow.style.display = 'flex';
+      } else {
+        modelInfoRow.style.display = 'none';
+      }
+
+      // Show screen when running
+      if (isRunning) {
+        showScreen();
+      }
+    }
+
+    // ─── Screen View ────────────────────────────
+    function setView(mode) {
+      viewMode = mode;
+      document.getElementById('btnVnc').classList.toggle('active', mode === 'vnc');
+      document.getElementById('btnScreenshot').classList.toggle('active', mode === 'screenshot');
+      showScreen();
+    }
+
+    let hasScreenshot = false;
+
+    function showScreen() {
+      const placeholder = document.getElementById('screenPlaceholder');
+      const vncFrame = document.getElementById('vncFrame');
+      const screenshotImg = document.getElementById('screenshotImg');
+      const novncUrl = vncFrame.dataset.novncUrl;
+
+      if (viewMode === 'vnc' && novncUrl) {
+        // VNC mode with a working noVNC URL
+        screenshotImg.style.display = 'none';
+        vncFrame.src = novncUrl;
+        vncFrame.style.display = 'block';
+        placeholder.style.display = 'none';
+      } else {
+        // Screenshot mode (or VNC mode without a noVNC URL -- fall back to screenshots)
+        vncFrame.style.display = 'none';
+        if (hasScreenshot) {
+          screenshotImg.style.display = 'block';
+          placeholder.style.display = 'none';
+        } else {
+          screenshotImg.style.display = 'none';
+          placeholder.style.display = 'flex';
+          placeholder.querySelector('p').textContent = 'Waiting for screenshot...';
+        }
+      }
+    }
+
+    function updateScreenshot(base64Data) {
+      const img = document.getElementById('screenshotImg');
+      img.src = `data:image/png;base64,${base64Data}`;
+      hasScreenshot = true;
+
+      // Show the screenshot if we're in screenshot mode or VNC has no URL
+      const vncFrame = document.getElementById('vncFrame');
+      if (viewMode === 'screenshot' || !vncFrame.dataset.novncUrl) {
+        img.style.display = 'block';
+        document.getElementById('screenPlaceholder').style.display = 'none';
+      }
+    }
+
+    // ─── Action Log ─────────────────────────────
+    function addLogEntry(data) {
+      const log = document.getElementById('actionLog');
+      const empty = document.getElementById('emptyLog');
+      if (empty) empty.style.display = 'none';
+
+      document.getElementById('stepCount').textContent = data.step;
+      totalActions += (data.actions || []).length;
+      document.getElementById('actionCount').textContent = totalActions;
+
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.id = `log-step-${data.step}`;
+
+      const time = new Date(data.timestamp).toLocaleTimeString();
+      const url = data.url ? data.url.replace(/^https?:\/\//, '').substring(0, 50) : '';
+
+      let actionsHtml = '';
+      if (data.actions && data.actions.length > 0) {
+        actionsHtml = '<div class="log-actions">' +
+          data.actions.map(a => `<div class="log-action">${escapeHtml(String(a).substring(0, 120))}</div>`).join('') +
+          '</div>';
+      }
+
+      const modelTag = data.model
+        ? `<span class="log-model">${escapeHtml(data.model.split('/').pop())}</span>`
+        : '';
+
+      // If log entry already has judge verdict (replayed from server), include it
+      let judgeHtml = '';
+      if (data.judge_verdict) {
+        judgeHtml = buildJudgeHtml(data.judge_verdict, data.judge_reason || '');
+      }
+
+      // If log entry already has council verdict (replayed from server), include it
+      let councilHtml = '';
+      if (data.council_verdict) {
+        councilHtml = buildCouncilHtml(data.council_verdict);
+      }
+
+      entry.innerHTML = `
+        <div class="log-entry-header">
+          <span class="step-badge">STEP ${data.step}</span>
+          ${modelTag}
+          ${url ? `<span class="log-url">${escapeHtml(url)}</span>` : ''}
+          <span class="log-timestamp">${time}</span>
+        </div>
+        ${data.thought ? `<div class="log-thought">${escapeHtml(data.thought)}</div>` : ''}
+        ${actionsHtml}
+        ${judgeHtml}
+        ${councilHtml}
+      `;
+
+      log.appendChild(entry);
+      entry.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function clearLog() {
+      const log = document.getElementById('actionLog');
+      log.innerHTML = `
+        <div id="emptyLog" class="empty-log">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+          <span>Log cleared. Start a task to see agent reasoning.</span>
+        </div>
+      `;
+      totalActions = 0;
+      document.getElementById('actionCount').textContent = '0';
+    }
+
+    // ─── Judge Verdict Display ─────────────────────
+    const VERDICT_ICONS = { PASS: '\u2713', WARN: '!', FAIL: '\u2717' };
+    const VERDICT_CSS   = { PASS: 'pass',   WARN: 'warn', FAIL: 'fail' };
+
+    function buildJudgeHtml(verdict, reason) {
+      const css = VERDICT_CSS[verdict] || 'pass';
+      const icon = VERDICT_ICONS[verdict] || '?';
+      return `<div class="judge-verdict ${css}">
+        <span class="judge-icon">${icon}</span>
+        <span class="judge-label">JUDGE</span>
+        <span class="judge-reason">${escapeHtml(reason)}</span>
+      </div>`;
+    }
+
+    function appendJudgeVerdict(data) {
+      const entry = document.getElementById(`log-step-${data.step}`);
+      if (!entry) return;
+      // Don't add twice
+      if (entry.querySelector('.judge-verdict')) return;
+      entry.insertAdjacentHTML('beforeend', buildJudgeHtml(data.verdict, data.reason));
+      entry.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    // ─── Council Verdict Display ──────────────────
+    function buildCouncilHtml(data) {
+      const memberTags = (data.members || [])
+        .map(m => `<span class="council-member-tag">${escapeHtml(m.model.split('/').pop())}</span>`)
+        .join('');
+
+      let replanHtml = '';
+      if (data.has_replan && data.replan_from) {
+        replanHtml = `<div class="council-replan">Plan revised by ${escapeHtml(data.replan_from)}</div>`;
+      }
+
+      return `<div class="council-verdict">
+        <div class="council-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          LLM Council (${data.failure_count} failures)
+        </div>
+        <div class="council-members">${memberTags}</div>
+        <div class="council-section"><strong>Diagnosis: </strong>${escapeHtml(data.diagnosis || '')}</div>
+        <div class="council-section"><strong>Advice: </strong>${escapeHtml(data.advice || '')}</div>
+        ${replanHtml}
+      </div>`;
+    }
+
+    function appendCouncilVerdict(data) {
+      const entry = document.getElementById(`log-step-${data.step}`);
+      if (!entry) return;
+      if (entry.querySelector('.council-verdict')) return;
+      entry.insertAdjacentHTML('beforeend', buildCouncilHtml(data));
+      entry.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    // ─── Task Control ───────────────────────────
+    function startTask() {
+      const task = document.getElementById('taskInput').value.trim();
+      if (!task) { document.getElementById('taskInput').focus(); return; }
+
+      const maxSteps = parseInt(document.getElementById('maxSteps').value) || 50;
+
+      // Build model config
+      const strategy = document.getElementById('strategySelect').value;
+      const modelConfig = {
+        strategy: strategy,
+        primary_model: document.getElementById('primaryModel').value,
+        secondary_model: (strategy !== 'single' && strategy !== 'council')
+          ? document.getElementById('secondaryModel').value : '',
+      };
+
+      // For council, collect selected council members
+      if (strategy === 'council') {
+        const checked = document.querySelectorAll('#councilPickerGrid input[type="checkbox"]:checked');
+        modelConfig.council_members = Array.from(checked).map(cb => cb.value);
+      }
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'start_task',
+          task,
+          max_steps: maxSteps,
+          model_config: modelConfig,
+        }));
+        // Reset UI
+        document.getElementById('resultCard').classList.remove('visible');
+        totalActions = 0;
+        document.getElementById('actionCount').textContent = '0';
+      } else {
+        // Fallback to HTTP
+        fetch('/api/agent/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task, max_steps: maxSteps, model_config_data: modelConfig }),
+        });
+      }
+    }
+
+    function stopTask() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop_task' }));
+      } else {
+        fetch('/api/agent/stop', { method: 'POST' });
+      }
+    }
+
+    // ─── Utilities ──────────────────────────────
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // ─── Model Configuration ────────────────────
+    async function fetchModels() {
+      try {
+        const resp = await fetch('/api/models');
+        const data = await resp.json();
+        availableModels = data.models || [];
+        const defaultModel = data.default_model || 'openai/gpt-4o';
+
+        const primarySelect = document.getElementById('primaryModel');
+        const secondarySelect = document.getElementById('secondaryModel');
+        primarySelect.innerHTML = '';
+        secondarySelect.innerHTML = '';
+
+        availableModels.forEach(m => {
+          primarySelect.add(new Option(`${m.name} (${m.tier})`, m.id));
+          secondarySelect.add(new Option(`${m.name} (${m.tier})`, m.id));
+        });
+
+        // Set defaults
+        primarySelect.value = defaultModel;
+        const reasoningModel = availableModels.find(m => m.tier === 'reasoning');
+        secondarySelect.value = reasoningModel ? reasoningModel.id : (availableModels[1] || {}).id || defaultModel;
+
+        // Populate council member picker (all models as toggleable chips)
+        const grid = document.getElementById('councilPickerGrid');
+        grid.innerHTML = '';
+        availableModels.forEach(m => {
+          const chip = document.createElement('label');
+          chip.className = 'council-chip selected';
+          chip.dataset.modelId = m.id;
+          chip.innerHTML = `
+            <input type="checkbox" value="${escapeHtml(m.id)}" checked onchange="onCouncilChipToggle(this)">
+            <span class="council-chip-name">${escapeHtml(m.name)}</span>
+            <span class="council-chip-tier">${escapeHtml(m.tier)}</span>
+          `;
+          grid.appendChild(chip);
+        });
+
+        onStrategyChange();
+      } catch (e) {
+        console.warn('Failed to fetch models:', e);
+      }
+    }
+
+    function onStrategyChange() {
+      const strategy = document.getElementById('strategySelect').value;
+      const secondaryGroup = document.getElementById('secondaryModelGroup');
+      const secondaryLabel = document.getElementById('secondaryModelLabel');
+      const councilGroup = document.getElementById('councilPickerGroup');
+      const hintText = document.getElementById('strategyHintText');
+
+      if (strategy === 'council') {
+        // Council mode: show multi-select picker, hide single secondary dropdown
+        secondaryGroup.style.display = 'none';
+        councilGroup.style.display = 'flex';
+        // Auto-uncheck the primary model in council picker (it can't advise itself)
+        updateCouncilChipsForPrimary();
+      } else if (strategy === 'single') {
+        secondaryGroup.style.display = 'none';
+        councilGroup.style.display = 'none';
+      } else {
+        secondaryGroup.style.display = 'flex';
+        councilGroup.style.display = 'none';
+        secondaryLabel.textContent = (STRATEGY_LABELS[strategy] || {}).secondaryLabel || 'Secondary Model';
+      }
+
+      hintText.textContent = STRATEGY_HINTS[strategy] || '';
+    }
+
+    function onCouncilChipToggle(checkbox) {
+      const chip = checkbox.closest('.council-chip');
+      chip.classList.toggle('selected', checkbox.checked);
+    }
+
+    function updateCouncilChipsForPrimary() {
+      const primaryId = document.getElementById('primaryModel').value;
+      const chips = document.querySelectorAll('#councilPickerGrid .council-chip');
+      chips.forEach(chip => {
+        const cb = chip.querySelector('input[type="checkbox"]');
+        if (cb.value === primaryId) {
+          // Disable and uncheck the primary model -- it can't be on the council
+          cb.checked = false;
+          cb.disabled = true;
+          chip.classList.remove('selected');
+          chip.style.opacity = '0.4';
+          chip.title = 'Primary model (cannot be a council member)';
+        } else {
+          cb.disabled = false;
+          chip.style.opacity = '1';
+          chip.title = '';
+          // Select non-primary models by default
+          if (!cb.dataset.userTouched) {
+            cb.checked = true;
+            chip.classList.add('selected');
+          }
+        }
+      });
+    }
+
+    // When primary model changes, update council chips
+    document.getElementById('primaryModel').addEventListener('change', () => {
+      if (document.getElementById('strategySelect').value === 'council') {
+        updateCouncilChipsForPrimary();
+      }
+    });
+
+    function toggleModelBar() {
+      modelBarVisible = !modelBarVisible;
+      document.getElementById('modelBar').style.display = modelBarVisible ? 'flex' : 'none';
+      document.getElementById('modelToggleBtn').classList.toggle('active', modelBarVisible);
+    }
+
+    // ─── Keyboard shortcut ──────────────────────
+    document.getElementById('taskInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (!isRunning) startTask();
+      }
+    });
+
+    // ─── Keepalive ping ─────────────────────────
+    setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 30000);
+
+    // ─── Init ───────────────────────────────────
+    connectWebSocket();
+    fetchModels();
+
+    // Fetch noVNC URL from the server API
+    setTimeout(async () => {
+      try {
+        const resp = await fetch('/api/novnc-url');
+        const data = await resp.json();
+        if (data.url) {
+          document.getElementById('vncFrame').dataset.novncUrl = data.url;
+          if (viewMode === 'vnc') showScreen();
+        }
+      } catch (e) {
+        console.log('noVNC URL fetch failed, using screenshot mode');
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
