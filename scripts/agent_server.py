@@ -73,6 +73,195 @@ logging.basicConfig(
 )
 logger = logging.getLogger("agent-server")
 
+
+# ─── Splash Screen ─────────────────────────────────────────────────────────────
+
+_SPLASH_PROCESS: Optional[subprocess.Popen] = None
+
+SPLASH_HTML = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:#F9F6F1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+  display:flex;align-items:center;justify-content:center;height:100vh;
+  overflow:hidden;color:#3d3d3d;
+}
+[data-status="failed"] body{background:#FDF2F2}
+.card{
+  text-align:center;padding:3rem 4rem;
+  background:#fff;border-radius:1rem;
+  box-shadow:0 8px 24px rgba(0,0,0,0.06);
+  max-width:560px;width:90%;
+}
+.capy{width:160px;height:160px;margin:0 auto 1.5rem}
+.title{
+  font-family:'Instrument Serif',Georgia,serif;font-size:2rem;font-weight:400;
+  color:#2d2d2d;margin-bottom:0.5rem;line-height:1.25;
+}
+.subtitle{font-size:0.95rem;color:#7a7a7a;line-height:1.5;margin-bottom:1.5rem}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 16px;border-radius:9999px;font-size:0.8rem;font-weight:600;
+}
+.badge.success{background:rgba(125,155,118,0.12);color:#5a7a52;border:1px solid rgba(125,155,118,0.25)}
+.badge.failed{background:rgba(198,122,107,0.12);color:#a85a4a;border:1px solid rgba(198,122,107,0.25)}
+.badge.stopped{background:rgba(212,167,106,0.12);color:#8a6d3a;border:1px solid rgba(212,167,106,0.25)}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot.success{background:#7D9B76}
+.dot.failed{background:#C67A6B}
+.dot.stopped{background:#D4A76A}
+.stats{
+  display:flex;justify-content:center;gap:2rem;margin-top:1.25rem;
+  font-size:0.8rem;color:#9B8B7A;
+}
+.stats span{font-weight:600;color:#5a5a5a}
+.hint{font-size:0.75rem;color:#b0a898;margin-top:1.5rem}
+</style></head>
+<body>
+<div class="card">
+  <div class="capy">
+    <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+      <!-- water ripples -->
+      <ellipse cx="80" cy="145" rx="65" ry="8" fill="#7BA3A8" opacity="0.15"/>
+      <ellipse cx="80" cy="145" rx="45" ry="5" fill="#7BA3A8" opacity="0.1"/>
+      <!-- body -->
+      <ellipse cx="80" cy="105" rx="42" ry="32" fill="#C4A882"/>
+      <!-- head -->
+      <ellipse cx="80" cy="68" rx="30" ry="26" fill="#D4B896"/>
+      <!-- ears -->
+      <ellipse cx="57" cy="48" rx="8" ry="6" fill="#C4A882" transform="rotate(-15 57 48)"/>
+      <ellipse cx="103" cy="48" rx="8" ry="6" fill="#C4A882" transform="rotate(15 103 48)"/>
+      <ellipse cx="57" cy="48" rx="5" ry="3.5" fill="#E8D5BC" transform="rotate(-15 57 48)"/>
+      <ellipse cx="103" cy="48" rx="5" ry="3.5" fill="#E8D5BC" transform="rotate(15 103 48)"/>
+      <!-- eyes -->
+      <circle cx="70" cy="63" r="4" fill="#3d3d3d"/>
+      <circle cx="90" cy="63" r="4" fill="#3d3d3d"/>
+      <circle cx="71.2" cy="61.8" r="1.2" fill="#fff"/>
+      <circle cx="91.2" cy="61.8" r="1.2" fill="#fff"/>
+      <!-- nose -->
+      <ellipse cx="80" cy="74" rx="6" ry="4" fill="#A08060"/>
+      <circle cx="77.5" cy="73.5" r="1.2" fill="#8a6a4a"/>
+      <circle cx="82.5" cy="73.5" r="1.2" fill="#8a6a4a"/>
+      <!-- mouth -->
+      <path d="M75 78 Q80 82 85 78" stroke="#A08060" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <!-- blush -->
+      <ellipse cx="63" cy="72" rx="5" ry="3" fill="#E8A090" opacity="0.35"/>
+      <ellipse cx="97" cy="72" rx="5" ry="3" fill="#E8A090" opacity="0.35"/>
+      <!-- whiskers -->
+      <line x1="55" y1="73" x2="40" y2="70" stroke="#C4A882" stroke-width="0.8" opacity="0.5"/>
+      <line x1="55" y1="76" x2="40" y2="77" stroke="#C4A882" stroke-width="0.8" opacity="0.5"/>
+      <line x1="105" y1="73" x2="120" y2="70" stroke="#C4A882" stroke-width="0.8" opacity="0.5"/>
+      <line x1="105" y1="76" x2="120" y2="77" stroke="#C4A882" stroke-width="0.8" opacity="0.5"/>
+      <!-- feet in water -->
+      <ellipse cx="65" cy="132" rx="10" ry="5" fill="#B89B78"/>
+      <ellipse cx="95" cy="132" rx="10" ry="5" fill="#B89B78"/>
+      <!-- water line -->
+      <path d="M15 138 Q40 132 80 138 Q120 144 145 138" stroke="#7BA3A8" stroke-width="1.5" fill="none" opacity="0.3"/>
+      <path d="M25 143 Q50 137 80 143 Q110 149 135 143" stroke="#7BA3A8" stroke-width="1" fill="none" opacity="0.2"/>
+    </svg>
+  </div>
+  <div class="title" id="title">Task Completed</div>
+  <div class="subtitle" id="subtitle">The browser agent has finished its work.</div>
+  <div class="badge success" id="badge"><div class="dot success"></div>Completed</div>
+  <div class="stats">
+    <div>Steps: <span id="steps">0</span></div>
+    <div>Actions: <span id="actions">0</span></div>
+  </div>
+  <div class="hint">Start a new task from the dashboard to continue</div>
+</div>
+</body></html>"""
+
+
+def _show_splash(status: str = "completed", steps: int = 0, actions: int = 0, result_text: str = ""):
+    """Show a styled splash screen on the Xvfb display after task finishes."""
+    global _SPLASH_PROCESS
+    _kill_splash()
+
+    # Customize HTML for the status
+    html = SPLASH_HTML
+    if status == "idle":
+        html = html.replace('Task Completed', 'Browser Agent Ready')
+        html = html.replace('has finished its work.', 'Waiting for a task. Open the dashboard to get started.')
+        html = html.replace('badge success', 'badge stopped').replace('dot success', 'dot stopped')
+        html = html.replace('>Completed<', '>Idle<')
+    elif status == "failed":
+        html = html.replace('<body>', '<body data-status="failed">')
+        html = html.replace('Task Completed', 'Task Failed')
+        html = html.replace('has finished its work.', 'encountered an error.')
+        html = html.replace('badge success', 'badge failed').replace('dot success', 'dot failed')
+        html = html.replace('>Completed<', '>Failed<')
+    elif status == "stopped":
+        html = html.replace('Task Completed', 'Task Stopped')
+        html = html.replace('has finished its work.', 'was stopped by the user.')
+        html = html.replace('badge success', 'badge stopped').replace('dot success', 'dot stopped')
+        html = html.replace('>Completed<', '>Stopped<')
+
+    # Inject stats via simple JS
+    stats_js = f"""<script>
+document.getElementById('steps').textContent='{steps}';
+document.getElementById('actions').textContent='{actions}';
+</script></body>"""
+    html = html.replace('</body>', stats_js)
+
+    splash_path = Path("/tmp/browser-agent-splash.html")
+    splash_path.write_text(html)
+
+    # Find Chromium binary
+    chrome_bin = None
+    pw_dir = Path.home() / ".cache" / "ms-playwright"
+    if pw_dir.exists():
+        for p in sorted(pw_dir.glob("chromium-*/chrome-linux64/chrome"), reverse=True):
+            if p.is_file():
+                chrome_bin = str(p)
+                break
+
+    if not chrome_bin:
+        logger.warning("Cannot show splash: Chromium binary not found")
+        return
+
+    try:
+        _SPLASH_PROCESS = subprocess.Popen(
+            [
+                chrome_bin,
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-translate",
+                "--disable-sync",
+                "--disable-extensions",
+                "--disable-infobars",
+                f"--user-data-dir=/tmp/splash-chrome-profile",
+                "--kiosk",
+                f"--window-size={SCREEN_WIDTH},{SCREEN_HEIGHT}",
+                f"file://{splash_path}",
+            ],
+            env={**os.environ, "DISPLAY": DISPLAY},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"Splash screen shown (status={status}, PID={_SPLASH_PROCESS.pid})")
+    except Exception as e:
+        logger.warning(f"Failed to show splash screen: {e}")
+
+
+def _kill_splash():
+    """Kill the splash screen Chromium process if running."""
+    global _SPLASH_PROCESS
+    if _SPLASH_PROCESS and _SPLASH_PROCESS.poll() is None:
+        try:
+            _SPLASH_PROCESS.terminate()
+            _SPLASH_PROCESS.wait(timeout=3)
+        except Exception:
+            try:
+                _SPLASH_PROCESS.kill()
+            except Exception:
+                pass
+    _SPLASH_PROCESS = None
+
+
 # ─── FastAPI App ────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Browser Agent Server", version="1.0.0")
@@ -1125,6 +1314,9 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
 
     global _last_loop_council_step
 
+    # Kill splash screen from previous run
+    _kill_splash()
+
     state.is_running = True
     state.status = "running"
     state.current_task_text = task
@@ -1269,6 +1461,15 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
         state.last_step_start_time = 0.0
         state.stall_council_fired_for_step = -1
         await broadcast_status()
+
+        # Show splash screen on the Xvfb display
+        total_actions = sum(len(e.get("actions", [])) for e in state.action_log)
+        _show_splash(
+            status=state.status,
+            steps=state.step_count,
+            actions=total_actions,
+            result_text=(state.result or "")[:200],
+        )
 
 
 async def broadcast_status():
@@ -1456,11 +1657,14 @@ async def startup():
     start_novnc()
     state.screenshot_task = asyncio.create_task(screenshot_broadcast_loop())
     logger.info("All services started")
+    # Show idle splash so VNC doesn't start with a black screen
+    _show_splash(status="idle", steps=0, actions=0)
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """Clean up processes."""
+    _kill_splash()
     if state.screenshot_task:
         state.screenshot_task.cancel()
     if state.stall_monitor_task and not state.stall_monitor_task.done():
