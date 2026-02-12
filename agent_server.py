@@ -32,10 +32,10 @@ from pydantic import BaseModel, Field, field_validator
 
 # ─── Configuration ──────────────────────────────────────────────────────────────
 
-DISPLAY_NUM = 99
+DISPLAY_NUM = int(os.environ.get("DISPLAY_NUM", "98"))
 DISPLAY = f":{DISPLAY_NUM}"
-SCREEN_WIDTH = 1280
-SCREEN_HEIGHT = 900
+SCREEN_WIDTH = int(os.environ.get("SCREEN_WIDTH", "1280"))
+SCREEN_HEIGHT = int(os.environ.get("SCREEN_HEIGHT", "1024"))
 SCREEN_DEPTH = 24
 VNC_PORT = 5999
 NOVNC_PORT = 6080
@@ -341,14 +341,27 @@ class AgentState:
         self.previous_task: str = ""
         self.previous_result: str = ""
         self.previous_model: str = ""
+        # Human-in-the-loop: allow user to send questions/messages to the running agent
+        self.pending_user_question: Optional[str] = None  # question text waiting for agent to pick up
+        self.user_answer: Optional[str] = None            # answer from user waiting to be injected
+        self.user_answer_event: Optional[asyncio.Event] = None  # signal that answer arrived
+        self.awaiting_user_input: bool = False             # True while agent is paused waiting for user
 
 state = AgentState()
 
 # ─── Display Management ────────────────────────────────────────────────────────
 
 def start_virtual_display():
-    """Start Xvfb virtual display."""
+    """Start Xvfb virtual display, or reuse an existing one."""
     logger.info(f"Starting Xvfb on display {DISPLAY} ({SCREEN_WIDTH}x{SCREEN_HEIGHT}x{SCREEN_DEPTH})")
+
+    # Check if Xvfb is already running on this display
+    result = subprocess.run(["pgrep", "-af", f"Xvfb {DISPLAY}"], capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        logger.info(f"Xvfb already running on {DISPLAY}, reusing: {result.stdout.strip().splitlines()[0]}")
+        os.environ["DISPLAY"] = DISPLAY
+        state.xvfb_proc = None
+        return
 
     # Kill any existing Xvfb on this display
     subprocess.run(["pkill", "-f", f"Xvfb {DISPLAY}"], capture_output=True)
@@ -420,9 +433,15 @@ def start_novnc():
     ]
     novnc_web = "/usr/share/novnc"
 
+    # Find websockify binary: prefer venv, fallback to system
+    websockify_bin = "websockify"
+    venv_websockify = os.path.join(os.path.dirname(sys.executable), "websockify")
+    if os.path.isfile(venv_websockify):
+        websockify_bin = venv_websockify
+
     state.novnc_proc = subprocess.Popen(
         [
-            "websockify",
+            websockify_bin,
             "--web", novnc_web,
             str(NOVNC_PORT),
             f"localhost:{VNC_PORT}",
@@ -449,9 +468,9 @@ async def take_screenshot() -> Optional[str]:
         if proc.returncode != 0 or not stdout:
             return None
 
-        # Convert XWD to PNG using ImageMagick or Python PIL
+        # Convert XWD to PNG at native resolution
         proc2 = await asyncio.create_subprocess_exec(
-            "convert", "xwd:-", "-resize", f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}", "png:-",
+            "convert", "xwd:-", "png:-",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -776,6 +795,11 @@ async def on_agent_step(browser_state, agent_output, step_number):
     # ── Grounding verification: detect common failures and inject corrective feedback ──
     await _verify_grounding(state.agent, log_entry, step_number)
 
+    # ── Human-in-the-loop: check if user has a pending message for the agent ──
+    user_msg = await _check_and_handle_user_message()
+    if user_msg and state.agent:
+        _inject_user_message_to_agent(state.agent, user_msg)
+
 
 async def _verify_grounding(agent, log_entry: dict, step_number: int):
     """Detect grounding failures after each step and inject corrective hints."""
@@ -846,6 +870,164 @@ async def _verify_grounding(agent, log_entry: dict, step_number: int):
             from browser_use.agent.views import ActionResult as AR
             agent.state.last_result = [AR(long_term_memory=combined)]
         logger.info(f"Grounding hints injected at step {step_number}: {combined[:150]}")
+
+
+# ─── Human-in-the-Loop ──────────────────────────────────────────────────────────
+
+async def _broadcast_question_to_user(question: str, step: int, source: str = "agent"):
+    """Send a question to all connected dashboard clients."""
+    msg = json.dumps({
+        "type": "ask_user",
+        "data": {
+            "question": question,
+            "step": step,
+            "source": source,  # "agent" = agent is paused, "user" = user initiated
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    })
+    disconnected = set()
+    for ws in state.ws_clients:
+        try:
+            await ws.send_text(msg)
+        except Exception:
+            disconnected.add(ws)
+    state.ws_clients -= disconnected
+
+
+async def _check_and_handle_user_message():
+    """Check if a user sent a message/question to the agent. If so, pause and wait for answer.
+    Called from on_agent_step after each step completes.
+    Returns the user's message (or None if no pending question)."""
+    if not state.pending_user_question:
+        return None
+
+    question = state.pending_user_question
+    step = state.last_step_number
+    state.pending_user_question = None
+
+    logger.info(f"Human-in-the-loop: pausing agent at step {step} for user question: {question[:100]}")
+
+    # Set up the wait mechanism
+    state.user_answer_event = asyncio.Event()
+    state.awaiting_user_input = True
+    state.user_answer = None
+
+    # Broadcast question to dashboard
+    await _broadcast_question_to_user(question, step, source="user")
+
+    # Broadcast status update so dashboard knows agent is paused
+    await broadcast_status()
+
+    # Wait for user answer (with timeout)
+    try:
+        await asyncio.wait_for(state.user_answer_event.wait(), timeout=300.0)  # 5 min timeout
+    except asyncio.TimeoutError:
+        logger.warning("Human-in-the-loop: timeout waiting for user answer (300s)")
+        state.awaiting_user_input = False
+        state.user_answer_event = None
+        # Broadcast resumption
+        await broadcast_status()
+        return None
+
+    answer = state.user_answer
+    state.awaiting_user_input = False
+    state.user_answer = None
+    state.user_answer_event = None
+
+    logger.info(f"Human-in-the-loop: received answer: {str(answer)[:200]}")
+
+    # Broadcast that we've resumed
+    await broadcast_status()
+
+    return answer
+
+
+def _inject_user_message_to_agent(agent, message: str):
+    """Inject a user message into the agent's long_term_memory so it reads it on the next step."""
+    feedback = f"[HUMAN MESSAGE] The user sent the following message to you: {message}"
+    if agent.state.last_result:
+        existing = agent.state.last_result[-1].long_term_memory or ""
+        agent.state.last_result[-1].long_term_memory = (
+            (existing + "\n" + feedback) if existing else feedback
+        )
+    else:
+        from browser_use.agent.views import ActionResult as AR
+        agent.state.last_result = [AR(long_term_memory=feedback)]
+    logger.info(f"Injected user message into agent long_term_memory: {message[:150]}")
+
+
+# ─── Action Format Fixer (monkey-patch) ──────────────────────────────────────────
+
+_ACTION_FIELD_FIXES = {
+    # Common model mistakes: wrong field names -> correct field names
+    "element_index": "index",
+    "element_id": "index",
+    "elem_index": "index",
+    "elementIndex": "index",
+    "element": "index",
+    "target_index": "index",
+    "input_text": "text",     # inside input action
+    "value": "text",           # inside input action
+}
+
+def _fix_action_json(raw_json: str) -> str:
+    """Fix common field-name mistakes in LLM-generated action JSON before Pydantic validates."""
+    try:
+        data = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return raw_json
+
+    changed = False
+    if "action" in data and isinstance(data["action"], list):
+        for action_obj in data["action"]:
+            if not isinstance(action_obj, dict):
+                continue
+            for action_name, action_params in list(action_obj.items()):
+                if not isinstance(action_params, dict):
+                    continue
+                for wrong_key, correct_key in _ACTION_FIELD_FIXES.items():
+                    if wrong_key in action_params and correct_key not in action_params:
+                        action_params[correct_key] = action_params.pop(wrong_key)
+                        changed = True
+                        logger.debug(f"Action fix: {action_name}.{wrong_key} -> {correct_key}")
+
+    if changed:
+        logger.info(f"Fixed malformed action JSON field names")
+        return json.dumps(data)
+    return raw_json
+
+
+def _install_action_format_fixer():
+    """Monkey-patch browser-use's ChatOpenAI.ainvoke to fix malformed action JSON before Pydantic validation."""
+    try:
+        from browser_use import ChatOpenAI
+        _original_ainvoke = ChatOpenAI.ainvoke
+
+        async def _patched_ainvoke(self, messages, output_format=None, **kwargs):
+            result = await _original_ainvoke(self, messages, output_format=output_format, **kwargs)
+            return result
+
+        # Instead of patching ainvoke (which happens after validation), we need to patch
+        # the AgentOutput.model_validate_json to fix JSON before validation
+        from browser_use.agent.views import AgentOutput
+        _original_validate = AgentOutput.model_validate_json
+
+        @classmethod
+        def _patched_validate(cls, json_data, *args, **kwargs):
+            if isinstance(json_data, (str, bytes)):
+                json_str = json_data if isinstance(json_data, str) else json_data.decode()
+                json_str = _fix_action_json(json_str)
+                return _original_validate.__func__(cls, json_str, *args, **kwargs)
+            return _original_validate.__func__(cls, json_data, *args, **kwargs)
+
+        AgentOutput.model_validate_json = _patched_validate
+        logger.info("Installed action format fixer (monkey-patched AgentOutput.model_validate_json)")
+    except Exception as e:
+        logger.warning(f"Could not install action format fixer: {e}")
+
+
+# Install the fixer at module load time
+_install_action_format_fixer()
 
 
 # ─── Request Models ──────────────────────────────────────────────────────────────
@@ -1806,6 +1988,14 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
             "6. Pay attention to element attributes (id, name, type, placeholder, aria-label) to "
             "identify the correct element. Do not guess based on index numbers alone.\n"
             "7. If you see a GROUNDING feedback message in memory, follow its guidance immediately.\n"
+            "8. CRITICAL ACTION FORMAT: Always use 'index' (NOT 'element_index') for element references.\n"
+            "   Correct examples:\n"
+            '   - Click: {"click": {"index": 5}}\n'
+            '   - Type text: {"input_text": {"index": 5, "text": "hello"}}\n'
+            '   - Scroll to: {"scroll_to_text": {"text": "Sign up"}}\n'
+            "   WRONG: {\"click\": {\"element_index\": 5}} -- this WILL cause validation errors!\n"
+            "9. If you need information from the user (like an OTP code, a password, or a confirmation), "
+            "you can pause and the user can send you messages through the dashboard.\n"
         )
         extra_kwargs["extend_system_message"] = grounding_prompt
 
@@ -2013,6 +2203,7 @@ async def broadcast_status():
             "council_members": state.active_council_members,
             "generated_plan": state.generated_plan,
             "plan_progress": state.plan_progress,
+            "awaiting_user_input": state.awaiting_user_input,
         },
     })
     disconnected = set()
@@ -2194,6 +2385,7 @@ async def websocket_endpoint(ws: WebSocket):
             "council_members": state.active_council_members,
             "generated_plan": state.generated_plan,
             "plan_progress": state.plan_progress,
+            "awaiting_user_input": state.awaiting_user_input,
         },
     }))
 
@@ -2226,6 +2418,30 @@ async def websocket_endpoint(ws: WebSocket):
                 if state.agent_task and not state.agent_task.done():
                     state.agent_task.cancel()
                     await ws.send_text(json.dumps({"type": "ack", "message": "Stopping agent"}))
+            elif msg.get("type") == "user_message":
+                # User sends a message to the running agent -- agent will see it on next step
+                user_msg = msg.get("message", "").strip()
+                if user_msg and state.is_running:
+                    if state.awaiting_user_input and state.user_answer_event:
+                        # Agent is already paused waiting -- deliver as answer
+                        state.user_answer = user_msg
+                        state.user_answer_event.set()
+                        await ws.send_text(json.dumps({"type": "ack", "message": "Answer delivered to agent"}))
+                    else:
+                        # Agent is running -- queue it so on_agent_step picks it up after current step
+                        state.pending_user_question = user_msg
+                        await ws.send_text(json.dumps({"type": "ack", "message": "Message queued for agent"}))
+                elif not state.is_running:
+                    await ws.send_text(json.dumps({"type": "error", "message": "No agent is running"}))
+            elif msg.get("type") == "answer_question":
+                # User answers a question the agent asked (or the pause prompt)
+                answer = msg.get("answer", "").strip()
+                if answer and state.awaiting_user_input and state.user_answer_event:
+                    state.user_answer = answer
+                    state.user_answer_event.set()
+                    await ws.send_text(json.dumps({"type": "ack", "message": "Answer delivered to agent"}))
+                else:
+                    await ws.send_text(json.dumps({"type": "error", "message": "No pending question to answer"}))
     except WebSocketDisconnect:
         pass
     except Exception as e:

@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -31,10 +32,10 @@ from pydantic import BaseModel, Field, field_validator
 
 # ─── Configuration ──────────────────────────────────────────────────────────────
 
-DISPLAY_NUM = 99
+DISPLAY_NUM = int(os.environ.get("DISPLAY_NUM", "98"))
 DISPLAY = f":{DISPLAY_NUM}"
-SCREEN_WIDTH = 1280
-SCREEN_HEIGHT = 900
+SCREEN_WIDTH = int(os.environ.get("SCREEN_WIDTH", "1280"))
+SCREEN_HEIGHT = int(os.environ.get("SCREEN_HEIGHT", "1024"))
 SCREEN_DEPTH = 24
 VNC_PORT = 5999
 NOVNC_PORT = 6080
@@ -340,14 +341,27 @@ class AgentState:
         self.previous_task: str = ""
         self.previous_result: str = ""
         self.previous_model: str = ""
+        # Human-in-the-loop: allow user to send questions/messages to the running agent
+        self.pending_user_question: Optional[str] = None  # question text waiting for agent to pick up
+        self.user_answer: Optional[str] = None            # answer from user waiting to be injected
+        self.user_answer_event: Optional[asyncio.Event] = None  # signal that answer arrived
+        self.awaiting_user_input: bool = False             # True while agent is paused waiting for user
 
 state = AgentState()
 
 # ─── Display Management ────────────────────────────────────────────────────────
 
 def start_virtual_display():
-    """Start Xvfb virtual display."""
+    """Start Xvfb virtual display, or reuse an existing one."""
     logger.info(f"Starting Xvfb on display {DISPLAY} ({SCREEN_WIDTH}x{SCREEN_HEIGHT}x{SCREEN_DEPTH})")
+
+    # Check if Xvfb is already running on this display
+    result = subprocess.run(["pgrep", "-af", f"Xvfb {DISPLAY}"], capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        logger.info(f"Xvfb already running on {DISPLAY}, reusing: {result.stdout.strip().splitlines()[0]}")
+        os.environ["DISPLAY"] = DISPLAY
+        state.xvfb_proc = None
+        return
 
     # Kill any existing Xvfb on this display
     subprocess.run(["pkill", "-f", f"Xvfb {DISPLAY}"], capture_output=True)
@@ -419,9 +433,15 @@ def start_novnc():
     ]
     novnc_web = "/usr/share/novnc"
 
+    # Find websockify binary: prefer venv, fallback to system
+    websockify_bin = "websockify"
+    venv_websockify = os.path.join(os.path.dirname(sys.executable), "websockify")
+    if os.path.isfile(venv_websockify):
+        websockify_bin = venv_websockify
+
     state.novnc_proc = subprocess.Popen(
         [
-            "websockify",
+            websockify_bin,
             "--web", novnc_web,
             str(NOVNC_PORT),
             f"localhost:{VNC_PORT}",
@@ -448,9 +468,9 @@ async def take_screenshot() -> Optional[str]:
         if proc.returncode != 0 or not stdout:
             return None
 
-        # Convert XWD to PNG using ImageMagick or Python PIL
+        # Convert XWD to PNG at native resolution
         proc2 = await asyncio.create_subprocess_exec(
-            "convert", "xwd:-", "-resize", f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}", "png:-",
+            "convert", "xwd:-", "png:-",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -567,6 +587,102 @@ def _summarize_action(act) -> str:
         return str(act)[:80]
 
 
+# ─── Plan Progress Auto-Update ────────────────────────────────────────────────
+
+_plan_highest_done_idx = -1  # Track highest completed step index across plan resets
+
+
+def _auto_update_plan_progress(agent, log_entry: dict):
+    """Proactively mark plan steps as done/current based on what actually happened.
+
+    browser-use only updates plan step statuses when the LLM explicitly outputs
+    `current_plan_item`. Many models skip this field, leaving steps stuck on
+    'pending' even when the work is done. This function matches the agent's
+    thought/actions/URL against plan step text to infer progress.
+
+    Also handles browser-use plan_update resets: if the LLM replaces the plan,
+    we re-apply progress up to the highest previously completed step.
+    """
+    global _plan_highest_done_idx
+    plan = agent.state.plan
+    if not plan:
+        return
+
+    # Check if browser-use reset our progress (plan_update replaced the plan)
+    # If all steps are pending/current but we previously had done steps, re-apply
+    done_count = sum(1 for item in plan if item.status == "done")
+    if done_count == 0 and _plan_highest_done_idx >= 0:
+        # Plan was reset by browser-use. Re-mark previously completed steps.
+        for i in range(min(_plan_highest_done_idx + 1, len(plan))):
+            plan[i].status = "done"
+        next_idx = min(_plan_highest_done_idx + 1, len(plan) - 1)
+        if plan[next_idx].status != "done":
+            plan[next_idx].status = "current"
+        logger.info(
+            f"Plan auto-update: restored progress after plan_update reset "
+            f"({_plan_highest_done_idx + 1} steps re-marked done)"
+        )
+
+    # Gather context from the step
+    thought = (log_entry.get("thought") or "").lower()
+    actions_text = " ".join(str(a) for a in log_entry.get("action_summaries", [])).lower()
+    url = (log_entry.get("url") or "").lower()
+    evaluation = (log_entry.get("evaluation") or "").lower()
+    memory = (log_entry.get("memory") or "").lower()
+    context = f"{thought} {actions_text} {url} {evaluation} {memory}"
+
+    # Find the first 'current' step
+    current_idx = None
+    for i, item in enumerate(plan):
+        if item.status == "current":
+            current_idx = i
+            break
+
+    if current_idx is None:
+        # No current step -- find first pending and make it current
+        for i, item in enumerate(plan):
+            if item.status == "pending":
+                item.status = "current"
+                current_idx = i
+                break
+        if current_idx is None:
+            return  # All done or skipped
+
+    current_step = plan[current_idx]
+    step_text = current_step.text.lower()
+
+    # Extract key action words from the plan step for matching
+    step_keywords = [w for w in re.split(r'[\s,;.!?()\[\]]+', step_text) if len(w) > 3]
+
+    # Check if the current step's intent appears to be satisfied
+    if step_keywords:
+        matches = sum(1 for kw in step_keywords if kw in context)
+        match_ratio = matches / len(step_keywords)
+    else:
+        match_ratio = 0
+
+    # Also check for explicit success signals in the evaluation
+    success_signals = ["success" in evaluation, "completed" in evaluation,
+                       "done" in evaluation, "verdict: success" in evaluation]
+    has_success = any(success_signals)
+
+    # Mark current step as done if we have good evidence
+    if match_ratio >= 0.4 or has_success:
+        plan[current_idx].status = "done"
+        # Track highest done index
+        if current_idx > _plan_highest_done_idx:
+            _plan_highest_done_idx = current_idx
+        # Advance to next pending step
+        for i in range(current_idx + 1, len(plan)):
+            if plan[i].status == "pending":
+                plan[i].status = "current"
+                break
+        logger.debug(
+            f"Plan auto-update: step {current_idx} '{current_step.text[:50]}' -> done "
+            f"(match={match_ratio:.0%}, success={has_success})"
+        )
+
+
 # ─── Agent Step Callback ───────────────────────────────────────────────────────
 
 async def on_agent_step(browser_state, agent_output, step_number):
@@ -642,10 +758,12 @@ async def on_agent_step(browser_state, agent_output, step_number):
     state.action_log.append(log_entry)
 
     # Extract plan progress from browser-use agent state
+    # Also proactively update plan step statuses based on what actually happened
     plan_items = None
     if state.agent and hasattr(state.agent, "state") and hasattr(state.agent.state, "plan"):
         bu_plan = state.agent.state.plan
         if bu_plan:
+            _auto_update_plan_progress(state.agent, log_entry)
             plan_items = [
                 {"text": item.text, "status": item.status}
                 for item in bu_plan
@@ -673,6 +791,243 @@ async def on_agent_step(browser_state, agent_output, step_number):
                 pass
 
     logger.info(f"Step {step_number}: {thought[:100]}..." if thought else f"Step {step_number}")
+
+    # ── Grounding verification: detect common failures and inject corrective feedback ──
+    await _verify_grounding(state.agent, log_entry, step_number)
+
+    # ── Human-in-the-loop: check if user has a pending message for the agent ──
+    user_msg = await _check_and_handle_user_message()
+    if user_msg and state.agent:
+        _inject_user_message_to_agent(state.agent, user_msg)
+
+
+async def _verify_grounding(agent, log_entry: dict, step_number: int):
+    """Detect grounding failures after each step and inject corrective hints."""
+    if not agent:
+        return
+
+    history = agent.history
+    if not history or not history.history:
+        return
+
+    hints = []
+    last_step = history.history[-1]
+
+    # Check 1: Action errors (element not found, stale index, etc.)
+    for r in last_step.result:
+        if r.error:
+            err = str(r.error).lower()
+            if "not available" in err or "not found" in err or "no element" in err:
+                hints.append(
+                    "GROUNDING: An element index was stale or unavailable. "
+                    "The page likely changed since last observation. "
+                    "Look at the CURRENT element list carefully before choosing an index."
+                )
+            elif "timeout" in err:
+                hints.append(
+                    "GROUNDING: Action timed out. The element may be obscured by an overlay, "
+                    "modal, or cookie banner. Check if something is blocking the target element."
+                )
+
+    # Check 2: Repeated same action (grounding loop - clicking same thing)
+    if len(history.history) >= 3:
+        recent_actions = []
+        for h in history.history[-3:]:
+            if h.model_output and hasattr(h.model_output, "action") and h.model_output.action:
+                recent_actions.append(str(h.model_output.action[0]) if h.model_output.action else "")
+        if len(recent_actions) == 3 and recent_actions[0] == recent_actions[1] == recent_actions[2]:
+            hints.append(
+                "GROUNDING: You have repeated the exact same action 3 times in a row. "
+                "This means the action is not having the expected effect. "
+                "Try a completely different approach: use a different element, scroll, "
+                "or use extract to understand the page structure better."
+            )
+
+    # Check 3: URL unchanged after navigation-like action
+    if len(history.history) >= 2:
+        prev_url = getattr(history.history[-2].state, "url", "") if history.history[-2].state else ""
+        curr_url = getattr(last_step.state, "url", "") if last_step.state else ""
+        # Check if the action was a click or navigate but URL didn't change
+        actions_desc = ""
+        if last_step.model_output and hasattr(last_step.model_output, "action"):
+            actions_desc = str(last_step.model_output.action).lower()
+        if ("navigate" in actions_desc or "go_to" in actions_desc) and prev_url == curr_url and curr_url:
+            hints.append(
+                "GROUNDING: You attempted navigation but the URL did not change. "
+                "The navigation may have failed or been blocked. "
+                "Verify the URL is correct and try again, or check for redirects."
+            )
+
+    # Inject hints into agent's long_term_memory if any issues detected
+    if hints:
+        combined = "\n".join(hints)
+        if agent.state.last_result:
+            existing = agent.state.last_result[-1].long_term_memory or ""
+            agent.state.last_result[-1].long_term_memory = (
+                (existing + "\n" + combined) if existing else combined
+            )
+        else:
+            from browser_use.agent.views import ActionResult as AR
+            agent.state.last_result = [AR(long_term_memory=combined)]
+        logger.info(f"Grounding hints injected at step {step_number}: {combined[:150]}")
+
+
+# ─── Human-in-the-Loop ──────────────────────────────────────────────────────────
+
+async def _broadcast_question_to_user(question: str, step: int, source: str = "agent"):
+    """Send a question to all connected dashboard clients."""
+    msg = json.dumps({
+        "type": "ask_user",
+        "data": {
+            "question": question,
+            "step": step,
+            "source": source,  # "agent" = agent is paused, "user" = user initiated
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    })
+    disconnected = set()
+    for ws in state.ws_clients:
+        try:
+            await ws.send_text(msg)
+        except Exception:
+            disconnected.add(ws)
+    state.ws_clients -= disconnected
+
+
+async def _check_and_handle_user_message():
+    """Check if a user sent a message/question to the agent. If so, pause and wait for answer.
+    Called from on_agent_step after each step completes.
+    Returns the user's message (or None if no pending question)."""
+    if not state.pending_user_question:
+        return None
+
+    question = state.pending_user_question
+    step = state.last_step_number
+    state.pending_user_question = None
+
+    logger.info(f"Human-in-the-loop: pausing agent at step {step} for user question: {question[:100]}")
+
+    # Set up the wait mechanism
+    state.user_answer_event = asyncio.Event()
+    state.awaiting_user_input = True
+    state.user_answer = None
+
+    # Broadcast question to dashboard
+    await _broadcast_question_to_user(question, step, source="user")
+
+    # Broadcast status update so dashboard knows agent is paused
+    await broadcast_status()
+
+    # Wait for user answer (with timeout)
+    try:
+        await asyncio.wait_for(state.user_answer_event.wait(), timeout=300.0)  # 5 min timeout
+    except asyncio.TimeoutError:
+        logger.warning("Human-in-the-loop: timeout waiting for user answer (300s)")
+        state.awaiting_user_input = False
+        state.user_answer_event = None
+        # Broadcast resumption
+        await broadcast_status()
+        return None
+
+    answer = state.user_answer
+    state.awaiting_user_input = False
+    state.user_answer = None
+    state.user_answer_event = None
+
+    logger.info(f"Human-in-the-loop: received answer: {str(answer)[:200]}")
+
+    # Broadcast that we've resumed
+    await broadcast_status()
+
+    return answer
+
+
+def _inject_user_message_to_agent(agent, message: str):
+    """Inject a user message into the agent's long_term_memory so it reads it on the next step."""
+    feedback = f"[HUMAN MESSAGE] The user sent the following message to you: {message}"
+    if agent.state.last_result:
+        existing = agent.state.last_result[-1].long_term_memory or ""
+        agent.state.last_result[-1].long_term_memory = (
+            (existing + "\n" + feedback) if existing else feedback
+        )
+    else:
+        from browser_use.agent.views import ActionResult as AR
+        agent.state.last_result = [AR(long_term_memory=feedback)]
+    logger.info(f"Injected user message into agent long_term_memory: {message[:150]}")
+
+
+# ─── Action Format Fixer (monkey-patch) ──────────────────────────────────────────
+
+_ACTION_FIELD_FIXES = {
+    # Common model mistakes: wrong field names -> correct field names
+    "element_index": "index",
+    "element_id": "index",
+    "elem_index": "index",
+    "elementIndex": "index",
+    "element": "index",
+    "target_index": "index",
+    "input_text": "text",     # inside input action
+    "value": "text",           # inside input action
+}
+
+def _fix_action_json(raw_json: str) -> str:
+    """Fix common field-name mistakes in LLM-generated action JSON before Pydantic validates."""
+    try:
+        data = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return raw_json
+
+    changed = False
+    if "action" in data and isinstance(data["action"], list):
+        for action_obj in data["action"]:
+            if not isinstance(action_obj, dict):
+                continue
+            for action_name, action_params in list(action_obj.items()):
+                if not isinstance(action_params, dict):
+                    continue
+                for wrong_key, correct_key in _ACTION_FIELD_FIXES.items():
+                    if wrong_key in action_params and correct_key not in action_params:
+                        action_params[correct_key] = action_params.pop(wrong_key)
+                        changed = True
+                        logger.debug(f"Action fix: {action_name}.{wrong_key} -> {correct_key}")
+
+    if changed:
+        logger.info(f"Fixed malformed action JSON field names")
+        return json.dumps(data)
+    return raw_json
+
+
+def _install_action_format_fixer():
+    """Monkey-patch browser-use's ChatOpenAI.ainvoke to fix malformed action JSON before Pydantic validation."""
+    try:
+        from browser_use import ChatOpenAI
+        _original_ainvoke = ChatOpenAI.ainvoke
+
+        async def _patched_ainvoke(self, messages, output_format=None, **kwargs):
+            result = await _original_ainvoke(self, messages, output_format=output_format, **kwargs)
+            return result
+
+        # Instead of patching ainvoke (which happens after validation), we need to patch
+        # the AgentOutput.model_validate_json to fix JSON before validation
+        from browser_use.agent.views import AgentOutput
+        _original_validate = AgentOutput.model_validate_json
+
+        @classmethod
+        def _patched_validate(cls, json_data, *args, **kwargs):
+            if isinstance(json_data, (str, bytes)):
+                json_str = json_data if isinstance(json_data, str) else json_data.decode()
+                json_str = _fix_action_json(json_str)
+                return _original_validate.__func__(cls, json_str, *args, **kwargs)
+            return _original_validate.__func__(cls, json_data, *args, **kwargs)
+
+        AgentOutput.model_validate_json = _patched_validate
+        logger.info("Installed action format fixer (monkey-patched AgentOutput.model_validate_json)")
+    except Exception as e:
+        logger.warning(f"Could not install action format fixer: {e}")
+
+
+# Install the fixer at module load time
+_install_action_format_fixer()
 
 
 # ─── Request Models ──────────────────────────────────────────────────────────────
@@ -718,8 +1073,9 @@ def create_llm(model_id: str):
 async def _per_step_judge(agent, judge_llm, task: str) -> None:
     """Called via on_step_end when consensus strategy is active.
 
-    Evaluates the last step and broadcasts the verdict to the dashboard
-    so the user can see live validation while the task runs.
+    Evaluates the last step and broadcasts the verdict to the dashboard.
+    On WARN or FAIL verdicts, injects feedback into the agent's long_term_memory
+    so the executing agent sees the critique and can adjust its approach.
     """
     from browser_use.llm.messages import SystemMessage, UserMessage
 
@@ -764,12 +1120,13 @@ async def _per_step_judge(agent, judge_llm, task: str) -> None:
             "You are a browser automation quality judge. After each step you must evaluate whether "
             "the agent is making correct progress toward the task. Respond with EXACTLY this format:\n"
             "VERDICT: PASS | WARN | FAIL\n"
-            "REASON: <one sentence explanation>\n\n"
+            "REASON: <one sentence explanation>\n"
+            "SUGGESTION: <one sentence on what the agent should do differently, or 'none' if PASS>\n\n"
             "Rules:\n"
-            "- PASS: The step clearly advances toward the goal.\n"
+            "- PASS: The step clearly advances toward the goal. SUGGESTION should be 'none'.\n"
             "- WARN: The step is questionable, might be off-track, or sub-optimal but not catastrophic.\n"
             "- FAIL: The step is clearly wrong, navigated to wrong page, filled wrong data, or is stuck in a loop.\n"
-            "Be concise. One sentence reason only."
+            "Be concise. One sentence each."
         ))
 
         user_msg = UserMessage(content=(
@@ -787,6 +1144,7 @@ async def _per_step_judge(agent, judge_llm, task: str) -> None:
         # Parse verdict
         verdict = "PASS"
         reason = verdict_text
+        suggestion = ""
         for line in verdict_text.split("\n"):
             line_upper = line.strip().upper()
             if line_upper.startswith("VERDICT:"):
@@ -799,13 +1157,38 @@ async def _per_step_judge(agent, judge_llm, task: str) -> None:
                     verdict = "PASS"
             if line.strip().upper().startswith("REASON:"):
                 reason = line.strip()[7:].strip()
+            if line.strip().upper().startswith("SUGGESTION:"):
+                suggestion = line.strip()[11:].strip()
 
         logger.info(f"Judge step {step_num}: {verdict} - {reason}")
+
+        # ── Inject feedback into agent on WARN/FAIL so it adapts ──
+        if verdict in ("WARN", "FAIL"):
+            feedback_msg = (
+                f"[JUDGE FEEDBACK - Step {step_num}: {verdict}] "
+                f"{reason}"
+            )
+            if suggestion and suggestion.lower() != "none":
+                feedback_msg += f" Suggestion: {suggestion}"
+
+            if agent.state.last_result:
+                # Append to existing long_term_memory if present
+                existing = agent.state.last_result[-1].long_term_memory or ""
+                agent.state.last_result[-1].long_term_memory = (
+                    (existing + "\n" + feedback_msg) if existing else feedback_msg
+                )
+            else:
+                from browser_use.agent.views import ActionResult as AR
+                agent.state.last_result = [AR(long_term_memory=feedback_msg)]
+
+            logger.info(f"Judge feedback injected into agent: {feedback_msg[:100]}")
 
         # Store in action log (append to the latest entry)
         if state.action_log:
             state.action_log[-1]["judge_verdict"] = verdict
             state.action_log[-1]["judge_reason"] = reason
+            if suggestion:
+                state.action_log[-1]["judge_suggestion"] = suggestion
 
         # Broadcast judge verdict to dashboard
         msg = json.dumps({
@@ -814,6 +1197,7 @@ async def _per_step_judge(agent, judge_llm, task: str) -> None:
                 "step": step_num,
                 "verdict": verdict,
                 "reason": reason,
+                "suggestion": suggestion,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         })
@@ -1536,9 +1920,13 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
     state.action_log = []
     state.step_count = 0
     state.result = None
+    state.generated_plan = ""
+    state.plan_progress = []
     _last_loop_council_step = 0
+    global _plan_highest_done_idx
+    _plan_highest_done_idx = -1
 
-    # Broadcast status change
+    # Broadcast status change (with cleared plan/log so frontend drops stale data)
     await broadcast_status()
 
     try:
@@ -1555,8 +1943,6 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
         state.active_primary_model = primary_id
         state.active_secondary_model = secondary_id
         state.active_council_members = []
-        state.generated_plan = ""
-        state.plan_progress = []
 
         logger.info(f"Strategy={strategy} | Primary={primary_id} | Secondary={secondary_id}")
 
@@ -1583,6 +1969,35 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
 
         # ── Strategy-specific Agent kwargs ──
         extra_kwargs = {}
+
+        # ── Grounding instructions (all strategies) ──
+        grounding_prompt = (
+            "\n\n## GROUNDING RULES (follow strictly)\n"
+            "1. ALWAYS verify the current page state before acting. Read the element list carefully.\n"
+            "2. Use the screenshot as your GROUND TRUTH. If the screenshot shows something different "
+            "from what you expect, trust the screenshot.\n"
+            "3. When filling forms, verify each field AFTER entering data by checking the element's "
+            "value attribute or the screenshot.\n"
+            "4. If an action fails or has no effect, do NOT repeat it. Try a different approach:\n"
+            "   - Use a different element index\n"
+            "   - Scroll to reveal hidden elements\n"
+            "   - Use extract to understand the page structure\n"
+            "   - Check for overlays, modals, or cookie banners blocking your target\n"
+            "5. After clicking a button that should navigate or submit, check if the URL or page "
+            "content actually changed.\n"
+            "6. Pay attention to element attributes (id, name, type, placeholder, aria-label) to "
+            "identify the correct element. Do not guess based on index numbers alone.\n"
+            "7. If you see a GROUNDING feedback message in memory, follow its guidance immediately.\n"
+            "8. CRITICAL ACTION FORMAT: Always use 'index' (NOT 'element_index') for element references.\n"
+            "   Correct examples:\n"
+            '   - Click: {"click": {"index": 5}}\n'
+            '   - Type text: {"input_text": {"index": 5, "text": "hello"}}\n'
+            '   - Scroll to: {"scroll_to_text": {"text": "Sign up"}}\n'
+            "   WRONG: {\"click\": {\"element_index\": 5}} -- this WILL cause validation errors!\n"
+            "9. If you need information from the user (like an OTP code, a password, or a confirmation), "
+            "you can pause and the user can send you messages through the dashboard.\n"
+        )
+        extra_kwargs["extend_system_message"] = grounding_prompt
 
         if strategy == "fallback_chain" and secondary_llm:
             extra_kwargs["fallback_llm"] = secondary_llm
@@ -1612,11 +2027,13 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
                 planner_label = primary_id
 
             state.generated_plan = plan_text
-            extra_kwargs["extend_system_message"] = (
+            extra_kwargs["extend_system_message"] = extra_kwargs.get("extend_system_message", "") + (
                 "\n\n## HIGH-LEVEL PLAN (from planning model)\n"
                 "Follow this plan step-by-step. Adapt if pages differ from expectations.\n\n"
                 + plan_text
             )
+            # Enable planning so browser-use tracks plan step progress (done/current/pending)
+            extra_kwargs["enable_planning"] = True
             if secondary_llm:
                 extra_kwargs["page_extraction_llm"] = secondary_llm
 
@@ -1670,11 +2087,41 @@ async def run_agent(task: str, max_steps: int = 50, model_cfg: Optional[ModelCon
             browser_session=browser_session,
             register_new_step_callback=on_agent_step,
             use_vision=True,
-            max_actions_per_step=3,
+            # Grounding: keep to 1 action per step so each action sees fresh DOM state.
+            # Multi-action batching causes stale indices when earlier actions change the page.
+            max_actions_per_step=1,
             generate_gif=False,
+            # Grounding: include key HTML attributes in element representation so the LLM
+            # can distinguish similar elements (e.g., multiple <input> fields on a form).
+            include_attributes=["id", "name", "type", "placeholder", "aria-label", "role", "href", "value"],
+            # Grounding: include recent browser events (clicks, navigations) so the LLM
+            # sees what just happened on the page.
+            include_recent_events=True,
             **extra_kwargs,
         )
         state.agent = agent
+
+        # ── Seed agent's plan from our generated plan (planner_executor) ──
+        if strategy == "planner_executor" and state.generated_plan:
+            from browser_use.agent.views import PlanItem
+            plan_lines = [
+                line.strip()
+                for line in state.generated_plan.split("\n")
+                if line.strip() and re.match(r"^\d+[\.\)]", line.strip())
+            ]
+            plan_steps_text = [re.sub(r"^\d+[\.\)]\s*", "", ln) for ln in plan_lines]
+            if plan_steps_text:
+                agent.state.plan = [PlanItem(text=t) for t in plan_steps_text]
+                agent.state.plan[0].status = "current"
+                # Broadcast initial plan_progress so Plan tab shows progress immediately
+                initial_progress = [{"text": item.text, "status": item.status} for item in agent.state.plan]
+                state.plan_progress = initial_progress
+                pp_msg = json.dumps({"type": "plan_progress", "data": {"items": initial_progress, "step": 0}})
+                for ws in state.ws_clients:
+                    try:
+                        await ws.send_text(pp_msg)
+                    except Exception:
+                        pass
 
         # ── Build run() kwargs (per-step hooks for consensus / council) ──
         run_kwargs = {"max_steps": max_steps}
@@ -1756,6 +2203,7 @@ async def broadcast_status():
             "council_members": state.active_council_members,
             "generated_plan": state.generated_plan,
             "plan_progress": state.plan_progress,
+            "awaiting_user_input": state.awaiting_user_input,
         },
     })
     disconnected = set()
@@ -1788,10 +2236,21 @@ async def _kill_browser_session():
     """Kill the persistent browser session and clear previous task context."""
     if state.browser_session:
         try:
+            # First try graceful stop, then force kill
             state.browser_session.browser_profile.keep_alive = False
+            try:
+                await state.browser_session.stop()
+            except Exception:
+                pass
             await state.browser_session.kill()
         except Exception as e:
             logger.warning(f"Error killing browser session: {e}")
+            # Fallback: try to kill underlying browser process directly
+            try:
+                if hasattr(state.browser_session, '_browser_pid') and state.browser_session._browser_pid:
+                    os.kill(state.browser_session._browser_pid, signal.SIGKILL)
+            except Exception:
+                pass
         state.browser_session = None
         logger.info("Browser session killed for new session")
     # Clear previous task context since we're starting fresh
@@ -1840,7 +2299,16 @@ async def new_browser_session():
             content={"status": "error", "message": "Cannot reset session while a task is running"},
         )
     await _kill_browser_session()
+    # Clear stale task data so dashboard shows clean state
+    state.generated_plan = ""
+    state.plan_progress = []
+    state.action_log = []
+    state.status = "idle"
+    state.current_task_text = ""
+    state.result = None
+    state.step_count = 0
     _show_splash(status="idle")
+    await broadcast_status()
     return {"status": "ok", "message": "Browser session cleared"}
 
 
@@ -1917,6 +2385,7 @@ async def websocket_endpoint(ws: WebSocket):
             "council_members": state.active_council_members,
             "generated_plan": state.generated_plan,
             "plan_progress": state.plan_progress,
+            "awaiting_user_input": state.awaiting_user_input,
         },
     }))
 
@@ -1949,6 +2418,30 @@ async def websocket_endpoint(ws: WebSocket):
                 if state.agent_task and not state.agent_task.done():
                     state.agent_task.cancel()
                     await ws.send_text(json.dumps({"type": "ack", "message": "Stopping agent"}))
+            elif msg.get("type") == "user_message":
+                # User sends a message to the running agent -- agent will see it on next step
+                user_msg = msg.get("message", "").strip()
+                if user_msg and state.is_running:
+                    if state.awaiting_user_input and state.user_answer_event:
+                        # Agent is already paused waiting -- deliver as answer
+                        state.user_answer = user_msg
+                        state.user_answer_event.set()
+                        await ws.send_text(json.dumps({"type": "ack", "message": "Answer delivered to agent"}))
+                    else:
+                        # Agent is running -- queue it so on_agent_step picks it up after current step
+                        state.pending_user_question = user_msg
+                        await ws.send_text(json.dumps({"type": "ack", "message": "Message queued for agent"}))
+                elif not state.is_running:
+                    await ws.send_text(json.dumps({"type": "error", "message": "No agent is running"}))
+            elif msg.get("type") == "answer_question":
+                # User answers a question the agent asked (or the pause prompt)
+                answer = msg.get("answer", "").strip()
+                if answer and state.awaiting_user_input and state.user_answer_event:
+                    state.user_answer = answer
+                    state.user_answer_event.set()
+                    await ws.send_text(json.dumps({"type": "ack", "message": "Answer delivered to agent"}))
+                else:
+                    await ws.send_text(json.dumps({"type": "error", "message": "No pending question to answer"}))
     except WebSocketDisconnect:
         pass
     except Exception as e:

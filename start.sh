@@ -71,7 +71,8 @@ fi
 # ─── Kill existing processes ──────────────────────────────────────────────────
 echo "[3/4] Cleaning up existing processes..."
 
-pkill -f "Xvfb :99" 2>/dev/null || true
+DISPLAY_NUM="${DISPLAY_NUM:-98}"
+pkill -f "Xvfb :${DISPLAY_NUM}" 2>/dev/null || true
 pkill -f "x11vnc.*5999" 2>/dev/null || true
 pkill -f "websockify.*6080" 2>/dev/null || true
 pkill -f "agent_server.py" 2>/dev/null || true
@@ -82,8 +83,9 @@ echo "  OK: Clean slate"
 echo "[4/4] Starting services..."
 echo ""
 
-# Set DISPLAY for the Python process
-export DISPLAY=:99
+# Set DISPLAY for the Python process (server manages its own Xvfb)
+# DISPLAY_NUM defaults to 98 in agent_server.py (avoids conflict with system Xvfb on :99)
+export DISPLAY=:${DISPLAY_NUM:-98}
 
 # Start the server (it manages Xvfb, VNC, noVNC internally)
 echo "  Starting Browser Agent server on port ${AGENT_PORT:-8888}..."

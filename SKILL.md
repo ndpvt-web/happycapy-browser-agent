@@ -17,7 +17,9 @@ start.sh         (startup script with prerequisite checks)
 
 **5 Strategies**: single, fallback_chain, planner_executor, consensus (per-step judge), council (multi-model failure recovery with loop detection)
 
-**Display**: Xvfb :99 -> x11vnc :5999 -> noVNC/websockify :6080
+**Display**: Xvfb :98 (configurable) -> x11vnc :5999 -> noVNC/websockify :6080
+
+**Live Screen**: The dashboard uses WebSocket-streamed screenshots (0.5s intervals) as the primary embedded view. VNC is available via pop-out for interactive control. The server manages its own Xvfb, x11vnc, and noVNC processes automatically on startup.
 
 ## Setup
 
@@ -31,9 +33,11 @@ sudo apt-get update && sudo apt-get install -y xvfb x11vnc x11-apps imagemagick 
 
 ```bash
 python3 -m venv /home/node/browser-agent-venv
-/home/node/browser-agent-venv/bin/pip install browser-use==0.11.9 fastapi uvicorn[standard] websockets
+/home/node/browser-agent-venv/bin/pip install browser-use==0.11.9 fastapi uvicorn[standard] websockets websockify
 /home/node/browser-agent-venv/bin/python3 -m playwright install chromium
 ```
+
+**IMPORTANT**: `websockify` must be installed in the venv (or available system-wide). The server auto-detects it from the venv's `bin/` directory first, then falls back to system PATH.
 
 ### 2b. CRITICAL: Install Chromium shared library dependencies
 
@@ -45,6 +49,14 @@ Without this step, Chromium will fail with `libatk-1.0.so.0: cannot open shared 
 
 This installs ~40 system libraries (libatk, libasound, libxkbcommon, fonts, etc.) that Chromium requires at runtime. **This is separate from `playwright install chromium`** which only downloads the browser binary.
 
+### 2c. Fix broken venv symlinks (if needed)
+
+If the venv's `python3` symlink is broken (e.g., after system upgrades), fix it:
+
+```bash
+ln -sf /usr/bin/python3 /home/node/browser-agent-venv/bin/python3
+```
+
 ### 3. Deploy application files
 
 Copy bundled scripts to a project directory:
@@ -52,9 +64,9 @@ Copy bundled scripts to a project directory:
 ```bash
 DEST="./outputs/browser-agent"
 mkdir -p "$DEST"
-cp ~/.claude/skills/browser-agent-server/scripts/agent_server.py "$DEST/"
-cp ~/.claude/skills/browser-agent-server/scripts/dashboard.html "$DEST/"
-cp ~/.claude/skills/browser-agent-server/scripts/start.sh "$DEST/"
+cp ~/.claude/skills/happycapy-browser-agent/scripts/agent_server.py "$DEST/"
+cp ~/.claude/skills/happycapy-browser-agent/scripts/dashboard.html "$DEST/"
+cp ~/.claude/skills/happycapy-browser-agent/scripts/start.sh "$DEST/"
 chmod +x "$DEST/start.sh"
 ```
 
@@ -64,27 +76,35 @@ chmod +x "$DEST/start.sh"
 # Required: LLM API key (OpenAI-compatible gateway)
 export AI_GATEWAY_API_KEY="your-key"
 
-# Optional: default model
-export BROWSER_AGENT_MODEL="openai/gpt-4o"
-
-# Optional: custom port
+# Optional: custom port (default 8888)
 export AGENT_PORT=8888
+
+# Optional: display number (default 98, avoids conflict with system Xvfb on :99)
+export DISPLAY_NUM=98
+
+# Optional: virtual display resolution (default 1280x1024)
+export SCREEN_WIDTH=1280
+export SCREEN_HEIGHT=1024
+
+# REQUIRED for sandbox environments: set the public noVNC URL for dashboard VNC pop-out
+# Replace with the actual exported URL from step 6
+export NOVNC_PUBLIC_URL="https://YOUR-NOVNC-URL/vnc.html?host=YOUR-HOST&port=443&encrypt=1&autoconnect=true&resize=scale&scaleViewport=true"
 ```
 
 ### 5. Start
 
 ```bash
 cd "$DEST"
-DISPLAY=:99 /home/node/browser-agent-venv/bin/python3 agent_server.py
-# Or use start.sh for full prerequisite checks:
-# ./start.sh
+/home/node/browser-agent-venv/bin/python3 agent_server.py
 ```
+
+The server automatically starts Xvfb, x11vnc, and noVNC. If an Xvfb is already running on the target display, it reuses it instead of failing.
 
 ### 6. Export ports (sandbox environments)
 
 ```bash
-/app/export-port.sh $AGENT_PORT   # Dashboard (default 8888, or whatever you set)
-/app/export-port.sh 6080          # noVNC live view
+/app/export-port.sh $AGENT_PORT   # Dashboard (default 8888)
+/app/export-port.sh 6080          # noVNC (for VNC pop-out, set NOVNC_PUBLIC_URL with exported URL)
 ```
 
 **Note**: Port 3001 is reserved. Do not use it. If port 8888 is already in use, set `AGENT_PORT` to another value (e.g., 9222).
@@ -175,16 +195,39 @@ This installs libatk, libasound, libxkbcommon, fonts, etc. **Must run after `pla
 ### Verify Chromium works
 
 ```bash
-DISPLAY=:99 /home/node/.cache/ms-playwright/chromium-*/chrome-linux64/chrome --version
+DISPLAY=:98 /home/node/.cache/ms-playwright/chromium-*/chrome-linux64/chrome --version
 ```
 
 If it prints a version, it's working. If it errors with `cannot open shared object file`, run `install-deps` above.
 
-### Xvfb lock file error (`Server is already active for display :99`)
+### Xvfb lock file error (`Server is already active for display :98`)
+
+The server now auto-detects and reuses existing Xvfb processes. If you still get lock file errors:
 
 ```bash
-rm -f /tmp/.X99-lock
-pkill -9 Xvfb
+rm -f /tmp/.X98-lock
+```
+
+To use a different display number:
+
+```bash
+export DISPLAY_NUM=97   # or any unused display number
+```
+
+### websockify not found
+
+The server auto-detects websockify from the Python venv first, then falls back to system PATH. Ensure it's installed:
+
+```bash
+/home/node/browser-agent-venv/bin/pip install websockify
+```
+
+### Broken Python venv symlinks
+
+If `python3` in the venv is a broken symlink:
+
+```bash
+ln -sf /usr/bin/python3 /home/node/browser-agent-venv/bin/python3
 ```
 
 ### Port already in use
@@ -201,6 +244,14 @@ Ensure `novnc` system package is installed (`/usr/share/novnc/` must exist):
 sudo apt-get install -y novnc
 ```
 
+### Dashboard screen not showing / tiny / wrong size
+
+The dashboard uses WebSocket-streamed screenshots as the primary live view. If the screen appears wrong:
+
+1. Hard-refresh the browser (Ctrl+Shift+R) to clear cached CSS
+2. Increase Xvfb resolution: `export SCREEN_WIDTH=1280 SCREEN_HEIGHT=1024`
+3. The default display `:98` avoids conflicts with system-managed Xvfb on `:99`
+
 ## Key Implementation Notes
 
 - `browser-use` ChatOpenAI returns `ChatInvokeCompletion` with `.completion` field (NOT `.content`)
@@ -210,3 +261,8 @@ sudo apt-get install -y novnc
 - The `on_step_end` hook signature: `AgentHookFunc = Callable[['Agent'], Awaitable[None]]`
 - Dashboard is a single HTML file with inline CSS/JS (no build step)
 - noVNC served from system install at `/usr/share/novnc/`
+- Dashboard live screen uses `object-fit: fill` with absolute positioning for full panel coverage
+- Body uses flexbox layout (`display: flex; flex-direction: column`) to prevent viewport overflow
+- CSS Grid cells use `min-width: 0` to prevent grid blowout from oversized content
+- Screenshots are streamed at native Xvfb resolution (no server-side resize) for best quality
+- The server reuses existing Xvfb if one is already running on the target display
